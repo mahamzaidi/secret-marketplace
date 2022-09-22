@@ -1,4 +1,5 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+#![allow(warnings, unused)]
 use std::any::type_name;
 
 use cosmwasm_std::{Api, BlockInfo, CanonicalAddr, ReadonlyStorage, StdError, StdResult, Storage};

@@ -1,4 +1,5 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+#![allow(warnings, unused)]
 use crate::rand::sha_256;
 use cosmwasm_std::{
     log, to_binary, Api, Binary, BlockInfo, CanonicalAddr, CosmosMsg, Env, Extern, HandleResponse,

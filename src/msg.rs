@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+#![allow(warnings, unused)]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
