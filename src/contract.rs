@@ -24,14 +24,12 @@ use crate::msg::{
     Send, Transfer,
 };
 use crate::state::{
-    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,
-    Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY,
+    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY,
     MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID,
     PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_SELLERS, PREFIX_TX_IDS,
     PRNG_SEED_KEY,
 };
 use crate::token::Token;
-use bincode2::config;
 
 pub const MARKET_FEE: u128 = 1000; //WRITE IN LOWEST DENOMINATION OF YOUR PREFERRED SNIP
 pub const TOKEN_FEE: u128 = 1000000;

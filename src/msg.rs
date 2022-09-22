@@ -3,7 +3,6 @@
 #![allow(warnings, unused)]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
 use cosmwasm_std::{Binary, Coin, HumanAddr, Uint128};
 
 
