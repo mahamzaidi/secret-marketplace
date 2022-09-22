@@ -19,3 +19,6 @@ contract.wasm.gz
 # IDEs
 *.iml
 .idea
+
+# Ignore all text files
+*.txt
