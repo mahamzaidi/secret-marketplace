@@ -70,10 +70,13 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
         .map(|a| deps.api.canonical_address(&a))
         .transpose()?
         .unwrap_or(creator_raw);
-    let prng_seed: Vec<u8> = sha_256(base64::encode(msg.entropy).as_bytes()).to_vec();
-    let init_config = msg.config.unwrap_or_default();
 
-    let config = Config {
+    let prng_seed: Vec<u8> = sha_256(base64::encode(msg.entropy).as_bytes()).to_vec();
+    let view_key = base64::encode(&prng_seed);
+    let init_config = msg.config.unwrap_or_default();
+    let ps = &prng_seed;
+
+    let mut config = Config {
         name: msg.name,
         admin: admin_raw.clone(),
         token_cnt: 0,
@@ -81,6 +84,9 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
         status: ContractStatus::Normal.to_u8(),
         token_supply_is_public: init_config.public_token_supply.unwrap_or(true),
         owner_is_public: init_config.public_owner.unwrap_or(true),
+        prng_seed: ps.to_vec(),
+        entropy: String::default(),
+        viewing_key: view_key,
     };
 
     let count = 0;
@@ -91,23 +97,34 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
     // TODO remove this after BlockInfo becomes available to queries
     save(&mut deps.storage, BLOCK_KEY, &env.block)?;
 
-    // perform the post init callback if needed
-    let messages: Vec<CosmosMsg> = if let Some(callback) = msg.post_init_callback {
-        let execute = WasmMsg::Execute {
-            msg: callback.msg,
-            contract_addr: callback.contract_address,
-            callback_code_hash: callback.code_hash,
-            send: callback.send,
-        };
-        vec![execute.into()]
-    } else {
-        Vec::new()
-    };
+    // // perform the post init callback if needed
+    // let messages: Vec<CosmosMsg> = if let Some(callback) = msg.post_init_callback {
+    //     let execute = WasmMsg::Execute {
+    //         msg: callback.msg,
+    //         contract_addr: callback.contract_address,
+    //         callback_code_hash: callback.code_hash,
+    //         send: callback.send,
+    //     };
+    //     vec![execute.into()]
+    // } else {
+    //     Vec::new()
+    // };
+
+
+    // Ok(InitResponse {
+    //    messages: Vec<CosmosMsg>= {
+    //     Vec::new()
+    //     log: vec![],
+    // };
+    // })
+
     Ok(InitResponse {
-        messages,
-        log: vec![],
+        messages: Vec::new(),
+        log:vec![],
     })
 }
+
+
 // list of tokens sent from one previous owner
 pub struct SendFrom {
     // the owner's address

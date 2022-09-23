@@ -17,11 +17,6 @@ pub struct InitMsg {
     pub config: Option<InitConfig>,
     /// entropy used for prng seed
     pub entropy: String,
-    /// optional callback message to execute after instantiation.  This will
-    /// most often be used to have the token contract provide its address to a
-    /// contract that instantiated it, but it could be used to execute any
-    /// contract
-    pub post_init_callback: Option<PostInitCallback>,
 }
 
 /// This type represents optional configuration values.

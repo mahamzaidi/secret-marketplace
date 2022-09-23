@@ -62,6 +62,12 @@ pub struct Config {
     pub token_supply_is_public: bool,
     /// is ownership public
     pub owner_is_public: bool,
+    /// prng seed
+    pub prng_seed: Vec<u8>,
+     /// combined entropy strings supplied with the heroes
+    pub entropy: String,
+    /// viewing key used with the contract
+    pub viewing_key: String,
 
 }
 
