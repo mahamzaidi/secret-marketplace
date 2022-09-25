@@ -46,7 +46,12 @@ pub const PREFIX_AUTHLIST: &[u8] = b"authlist";
 pub const PREFIX_OWNER_PRIV: &[u8] = b"ownerpriv";
 /// prefix for storage of viewing keys
 pub const PREFIX_VIEW_KEY: &[u8] = b"viewkeys";
-
+/// prefix for the storage of public metadata
+pub const PREFIX_PUB_META: &[u8] = b"publicmeta";
+/// prefix for the storage of private metadata
+pub const PREFIX_PRIV_META: &[u8] = b"privatemeta";
+/// storage key for minters
+pub const MINTERS_KEY: &[u8] = b"minters";
 
 /// Token contract config
 #[derive(Serialize, Debug, Deserialize, Clone, PartialEq)]
@@ -114,6 +119,7 @@ pub struct Permission {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PermissionType {
     ViewOwner,
+    ViewMetadata,
     Transfer,
 }
 
@@ -122,7 +128,8 @@ impl PermissionType {
     pub fn to_usize(&self) -> usize {
         match self {
             PermissionType::ViewOwner => 0,
-            PermissionType::Transfer => 1,
+            PermissionType::ViewMetadata => 1,
+            PermissionType::Transfer => 2,
         }
     }
 

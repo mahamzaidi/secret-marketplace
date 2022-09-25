@@ -13,7 +13,7 @@ pub struct Token {
     /// true if this token has been unwrapped.  If sealed metadata is not enabled, all
     /// tokens are considered unwrapped
     pub unwrapped: bool,
-    pub transferrable: bool,
+    pub transferable: bool,
 }
 
 /// token metadata

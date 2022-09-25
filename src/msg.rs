@@ -4,6 +4,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use cosmwasm_std::{Binary, Coin, HumanAddr, Uint128};
+use crate::expiration::Expiration;
+use crate::token::{Extension, Metadata};
+use secret_toolkit::permit::Permit;
 
 
 /// Instantiation message
@@ -138,9 +141,6 @@ pub enum HandleMsg {
         /// optional message length padding
         padding: Option<String>,
     },
-    // BuyNft {
-    //     token_id: String,
-    // },
 
 }
 
@@ -200,6 +200,24 @@ pub enum HandleAnswer {
     },
 }
 
+/// response of CW721 OwnerOf
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct Cw721OwnerOfResponse {
+    /// Owner of the token if permitted to view it
+    pub owner: Option<HumanAddr>,
+    /// list of addresses approved to transfer this token
+    pub approvals: Vec<Cw721Approval>,
+}
+
+/// CW721 Approval
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct Cw721Approval {
+    /// address that can transfer the token
+    pub spender: HumanAddr,
+    /// expiration of this approval
+    pub expires: Expiration,
+}
+
 /// the address and viewing key making an authenticated query request
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ViewerInfo {
@@ -234,6 +252,76 @@ pub enum QueryMsg {
     },
     /// display the contract's creator
     ContractCreator {},
+    /// display the number of tokens controlled by the contract.  The token supply must
+    /// either be public, or the querier must be an authenticated minter
+    NumTokens {
+        /// optional address and key requesting to view the number of tokens
+        viewer: Option<ViewerInfo>,
+    },
+    /// display an optionally paginated list of all the tokens controlled by the contract.
+    /// The token supply must either be public, or the querier must be an authenticated
+    /// minter
+    AllTokens {
+        /// optional address and key requesting to view the list of tokens
+        viewer: Option<ViewerInfo>,
+        /// paginate by providing the last token_id received in the previous query
+        start_after: Option<String>,
+        /// optional number of token ids to display
+        limit: Option<u32>,
+    },
+    /// display the owner of the specified token if authorized to view it.  If the requester
+    /// is also the token's owner, the response will also include a list of any addresses
+    /// that can transfer this token.  The transfer approval list is for CW721 compliance,
+    /// but the NftDossier query will be more complete by showing viewing approvals as well
+    OwnerOf {
+        token_id: String,
+        /// optional address and key requesting to view the token owner
+        viewer: Option<ViewerInfo>,
+        /// optionally include expired Approvals in the response list.  If ommitted or
+        /// false, expired Approvals will be filtered out of the response
+        include_expired: Option<bool>,
+    },
+    /// displays the public metadata of a token
+    NftInfo { token_id: String },
+    /// displays all the information contained in the OwnerOf and NftInfo queries
+    AllNftInfo {
+        token_id: String,
+        /// optional address and key requesting to view the token owner
+        viewer: Option<ViewerInfo>,
+        /// optionally include expired Approvals in the response list.  If ommitted or
+        /// false, expired Approvals will be filtered out of the response
+        include_expired: Option<bool>,
+    },
+    /// displays the private metadata if permitted to view it
+    PrivateMetadata {
+        token_id: String,
+        /// optional address and key requesting to view the private metadata
+        viewer: Option<ViewerInfo>,
+    },
+    /// displays a list of all the tokens belonging to the input owner in which the viewer
+    /// has view_owner permission
+    Tokens {
+        owner: HumanAddr,
+        /// optional address of the querier if different from the owner
+        viewer: Option<HumanAddr>,
+        /// optional viewing key
+        viewing_key: Option<String>,
+        /// paginate by providing the last token_id received in the previous query
+        start_after: Option<String>,
+        /// optional number of token ids to display
+        limit: Option<u32>,
+    },
+    /// displays the number of tokens that the querier has permission to see the owner and that
+    /// belong to the specified address
+    NumTokensOfOwner {
+        owner: HumanAddr,
+        /// optional address of the querier if different from the owner
+        viewer: Option<HumanAddr>,
+        /// optional viewing key
+        viewing_key: Option<String>,
+    },
+     /// display if a token is transferable
+     IsTransferable { token_id: String },
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
@@ -252,6 +340,31 @@ pub enum QueryAnswer {
     },
     ContractCreator {
         creator: Option<HumanAddr>,
+    },
+    OwnerOf {
+        owner: HumanAddr,
+        approvals: Vec<Cw721Approval>,
+    },
+    NftInfo {
+        token_uri: Option<String>,
+        extension: Option<Extension>,
+    },
+    PrivateMetadata {
+        token_uri: Option<String>,
+        extension: Option<Extension>,
+    },
+    AllNftInfo {
+        access: Cw721OwnerOfResponse,
+        info: Option<Metadata>,
+    },
+    IsTransferable {
+        token_is_transferable: bool,
+    },
+    TokenList {
+        tokens: Vec<String>,
+    },
+    NumTokens {
+        count: u32,
     },
 }
 
@@ -315,3 +428,113 @@ impl ContractStatus {
     }
 }
 
+/// queries using permits instead of viewing keys
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryWithPermit {
+    /// display the royalty information of a token if a token ID is specified, or display the
+    /// contract's default royalty information in no token ID is provided
+    // RoyaltyInfo {
+    //     /// optional ID of the token whose royalty information should be displayed.  If not
+    //     /// provided, display the contract's default royalty information
+    //     token_id: Option<String>,
+    // },
+    /// displays the private metadata if permitted to view it
+    PrivateMetadata { token_id: String },
+    /// displays all the information about a token that the viewer has permission to
+    /// see.  This may include the owner, the public metadata, the private metadata, royalty
+    /// information, mint run information, whether the token is unwrapped, whether the token is
+    /// transferable, and the token and inventory approvals
+    // NftDossier {
+    //     token_id: String,
+    //     /// optionally include expired Approvals in the response list.  If ommitted or
+    //     /// false, expired Approvals will be filtered out of the response
+    //     include_expired: Option<bool>,
+    // },
+    /// displays all the information about multiple tokens that the viewer has permission to
+    /// see.  This may include the owner, the public metadata, the private metadata, royalty
+    /// information, mint run information, whether the token is unwrapped, whether the token is
+    /// transferable, and the token and inventory approvals
+    // BatchNftDossier {
+    //     token_ids: Vec<String>,
+    //     /// optionally include expired Approvals in the response list.  If ommitted or
+    //     /// false, expired Approvals will be filtered out of the response
+    //     include_expired: Option<bool>,
+    // },
+    /// display the owner of the specified token if authorized to view it.  If the requester
+    /// is also the token's owner, the response will also include a list of any addresses
+    /// that can transfer this token.  The transfer approval list is for CW721 compliance,
+    /// but the NftDossier query will be more complete by showing viewing approvals as well
+    OwnerOf {
+        token_id: String,
+        /// optionally include expired Approvals in the response list.  If ommitted or
+        /// false, expired Approvals will be filtered out of the response
+        include_expired: Option<bool>,
+    },
+    /// displays all the information contained in the OwnerOf and NftInfo queries
+    AllNftInfo {
+        token_id: String,
+        /// optionally include expired Approvals in the response list.  If ommitted or
+        /// false, expired Approvals will be filtered out of the response
+        include_expired: Option<bool>,
+    },
+    /// list all the inventory-wide approvals in place for the permit creator
+    // InventoryApprovals {
+    //     /// optionally include expired Approvals in the response list.  If ommitted or
+    //     /// false, expired Approvals will be filtered out of the response
+    //     include_expired: Option<bool>,
+    // },
+    /// verify that the permit creator has approval to transfer every listed token.  
+    /// A token will count as unapproved if it is non-transferable
+    // VerifyTransferApproval {
+    //     /// list of tokens to verify approval for
+    //     token_ids: Vec<String>,
+    // },
+    /// display the transaction history for the permit creator in reverse
+    /// chronological order
+    // TransactionHistory {
+    //     /// optional page to display
+    //     page: Option<u32>,
+    //     /// optional number of transactions per page
+    //     page_size: Option<u32>,
+    // },
+    /// display the number of tokens controlled by the contract.  The token supply must
+    /// either be public, or the querier must be an authenticated minter
+    NumTokens {},
+    /// display an optionally paginated list of all the tokens controlled by the contract.
+    /// The token supply must either be public, or the querier must be an authenticated
+    /// minter
+    AllTokens {
+        /// paginate by providing the last token_id received in the previous query
+        start_after: Option<String>,
+        /// optional number of token ids to display
+        limit: Option<u32>,
+    },
+    /// list all the approvals in place for a specified token if given the owner's permit
+    // TokenApprovals {
+    //     token_id: String,
+    //     /// optionally include expired Approvals in the response list.  If ommitted or
+    //     /// false, expired Approvals will be filtered out of the response
+    //     include_expired: Option<bool>,
+    // },
+    /// displays a list of all the CW721-style operators (any address that was granted
+    /// approval to transfer all of the owner's tokens).  This query is provided to maintain
+    /// CW721 compliance
+    // ApprovedForAll {
+    //     /// optionally include expired Approvals in the response list.  If ommitted or
+    //     /// false, expired Approvals will be filtered out of the response
+    //     include_expired: Option<bool>,
+    // },
+    /// displays a list of all the tokens belonging to the input owner in which the permit
+    /// creator has view_owner permission
+    Tokens {
+        owner: HumanAddr,
+        /// paginate by providing the last token_id received in the previous query
+        start_after: Option<String>,
+        /// optional number of token ids to display
+        limit: Option<u32>,
+    },
+    /// displays the number of tokens that the querier has permission to see the owner and that
+    /// belong to the specified address
+    NumTokensOfOwner { owner: HumanAddr },
+}
