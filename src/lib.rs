@@ -5,6 +5,9 @@ pub mod token;
 pub mod expiration;
 pub mod rand;
 pub mod inventory;
+pub mod viewing_key;
+pub mod utils;
+pub mod receiver;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {

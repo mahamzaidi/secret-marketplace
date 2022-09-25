@@ -92,18 +92,55 @@ pub enum HandleMsg {
         /// optional message length padding
         padding: Option<String>,
     },
-    BatchReceiveNft {
-        /// address that sent the NFTs
-        sender: HumanAddr,
-        /// previous owner of the NFTs
-        from: HumanAddr,
-        /// list of NFTs sent from the previous owner
-        token_ids: Vec<String>,
-        /// msg specified when sending
-        msg: Option<Binary>,
-        /// receving contract's code hash
-        code_hash: String,
+    MakeOwnershipPrivate {
+        /// optional message length padding
+        padding: Option<String>,
     },
+    TransferNft {
+        /// recipient of the transfer
+        recipient: HumanAddr,
+        /// id of the token to transfer
+        token_id: String,
+        /// optional memo for the tx
+        memo: Option<String>,
+        /// optional message length padding
+        padding: Option<String>,
+    },
+    SendNft {
+        /// address to send the token to
+        contract: HumanAddr,
+        /// optional code hash and BatchReceiveNft implementation status of the recipient contract
+        receiver_info: Option<ReceiverInfo>,
+        /// id of the token to send
+        token_id: String,
+        /// optional message to send with the (Batch)RecieveNft callback
+        msg: Option<Binary>,
+        /// optional memo for the tx
+        memo: Option<String>,
+        /// optional message length padding
+        padding: Option<String>,
+    },
+    CreateViewingKey {
+        /// entropy String used in random key generation
+        entropy: String,
+        /// optional message length padding
+        padding: Option<String>,
+    },
+    SetViewingKey {
+        /// desired viewing key
+        key: String,
+        /// optional message length padding
+        padding: Option<String>,
+    },
+    ChangeAdmin {
+        /// address with admin authority
+        address: HumanAddr,
+        /// optional message length padding
+        padding: Option<String>,
+    },
+    // BuyNft {
+    //     token_id: String,
+    // },
 
 }
 
@@ -145,9 +182,22 @@ pub enum HandleAnswer {
     SetContractStatus {
         status: ResponseStatus,
     },
-    BatchReceiveNft {
+    MakeOwnershipPrivate {
         status: ResponseStatus,
-    }
+    },
+    TransferNft {
+        status: ResponseStatus,
+    },
+    SendNft {
+        status: ResponseStatus,
+    },
+    /// response from both setting and creating a viewing key
+    ViewingKey {
+        key: String,
+    },
+    ChangeAdmin {
+        status: ResponseStatus,
+    },
 }
 
 /// the address and viewing key making an authenticated query request

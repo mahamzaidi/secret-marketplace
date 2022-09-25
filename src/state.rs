@@ -42,8 +42,11 @@ pub const PREFIX_TXS: &[u8] = b"rawtxs";
 pub const PREFIX_TX_IDS: &[u8] = b"txids";
 /// prefix for storage of owner's list of tokens permitted to addresses
 pub const PREFIX_AUTHLIST: &[u8] = b"authlist";
-/// prefix for storage of an address' ownership prvicacy
+/// prefix for storage of an address' ownership privacy
 pub const PREFIX_OWNER_PRIV: &[u8] = b"ownerpriv";
+/// prefix for storage of viewing keys
+pub const PREFIX_VIEW_KEY: &[u8] = b"viewkeys";
+
 
 /// Token contract config
 #[derive(Serialize, Debug, Deserialize, Clone, PartialEq)]

@@ -8,31 +8,26 @@ use cosmwasm_std::{
 };
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
 use primitive_types::U256;
+use std::collections::HashSet;
+
 use secret_toolkit::{
     permit::{validate, Permit, RevokedPermits},
     utils::{pad_handle_result, pad_query_result},
 };
-/// This contract implements SNIP-721 standard:
-/// https://github.com/SecretFoundation/SNIPs/blob/master/SNIP-721.md
-use std::collections::HashSet;
-
 use crate::inventory::{Inventory, InventoryIter};
 use crate::msg::{
     AccessLevel, ContractStatus, HandleAnswer, HandleMsg, InitMsg, QueryAnswer, QueryMsg,
-    ReceiverInfo,
-    ResponseStatus::{Failure, Success},
-    Send, Transfer,
+    ReceiverInfo, ResponseStatus::{Failure, Success}, Send, Transfer,
 };
 use crate::state::{
-    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY,
-    MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID,
-    PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_SELLERS, PREFIX_TX_IDS,
-    PRNG_SEED_KEY,
+    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_SELLERS, PREFIX_TX_IDS, PRNG_SEED_KEY, PREFIX_VIEW_KEY,
 };
 use crate::token::Token;
+use crate::receiver::{receive_nft_msg, batch_receive_nft_msg, Snip721ReceiveMsg::{ReceiveNft, BatchReceiveNft}};
+use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
 
-pub const MARKET_FEE: u128 = 1000; //WRITE IN LOWEST DENOMINATION OF YOUR PREFERRED SNIP
-pub const TOKEN_FEE: u128 = 1000000;
+pub const MARKET_FEE: u128 = 300; //WRITE IN LOWEST DENOMINATION OF YOUR PREFERRED SNIP
+pub const TOKEN_FEE: u128 = 5000;
 pub const TOTAL_FEE: u128 = TOKEN_FEE - MARKET_FEE;
 pub const BUYER: &str = "secret1y7anmvqjwnxqttrqjjmtqkj2fk4uh9ee77vs7z";
 pub const SELLER: &str = "secret1f2xhf3ruydr7latjyypx6x08enattstqdertks";
@@ -97,27 +92,6 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
     // TODO remove this after BlockInfo becomes available to queries
     save(&mut deps.storage, BLOCK_KEY, &env.block)?;
 
-    // // perform the post init callback if needed
-    // let messages: Vec<CosmosMsg> = if let Some(callback) = msg.post_init_callback {
-    //     let execute = WasmMsg::Execute {
-    //         msg: callback.msg,
-    //         contract_addr: callback.contract_address,
-    //         callback_code_hash: callback.code_hash,
-    //         send: callback.send,
-    //     };
-    //     vec![execute.into()]
-    // } else {
-    //     Vec::new()
-    // };
-
-
-    // Ok(InitResponse {
-    //    messages: Vec<CosmosMsg>= {
-    //     Vec::new()
-    //     log: vec![],
-    // };
-    // })
-
     Ok(InitResponse {
         messages: Vec::new(),
         log:vec![],
@@ -131,6 +105,34 @@ pub struct SendFrom {
     pub owner: HumanAddr,
     // the tokens that were sent
     pub token_ids: Vec<String>,
+}
+
+// permission type info
+pub struct PermissionTypeInfo {
+    // index for view owner permission
+    pub view_owner_idx: usize,
+    // index for view private metadata permission
+    pub view_meta_idx: usize,
+    // index for transfer permission
+    pub transfer_idx: usize,
+    // number of permission types
+    pub num_types: usize,
+}
+
+// a receiver, their code hash, and whether they implement BatchReceiveNft
+pub struct CacheReceiverInfo {
+    // the contract address
+    pub contract: CanonicalAddr,
+    // the contract's registration info
+    pub registration: ReceiveRegistration,
+}
+
+// an owner's inventory and the tokens they lost in this tx
+pub struct InventoryUpdate {
+    // owner's inventory
+    pub inventory: Inventory,
+    // the list of lost tokens
+    pub remove: HashSet<u32>,
 }
 
 ///////////////////////////////////// Handle //////////////////////////////////////
@@ -165,54 +167,322 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
         ),
         HandleMsg::SetContractStatus { level, .. } => {
             set_contract_status(deps, env, &mut config, level)
-        }
-        HandleMsg::BatchReceiveNft {
-            sender,
-            from,
-            token_ids,
-            msg,
-            code_hash,
+        },
+        HandleMsg::TransferNft {
+            recipient,
+            token_id,
+            memo,
             ..
-        } => try_receive(deps, sender, from, &token_ids, msg, code_hash),
+        } => transfer_nft(
+            deps,
+            env,
+            &mut config,
+            ContractStatus::Normal.to_u8(),
+            recipient,
+            token_id,
+            memo,
+        ),
+        HandleMsg::SendNft {
+            contract,
+            receiver_info,
+            token_id,
+            msg,
+            memo,
+            ..
+        } => send_nft(
+            deps,
+            env,
+            &mut config,
+            ContractStatus::Normal.to_u8(),
+            contract,
+            receiver_info,
+            token_id,
+            msg,
+            memo,
+        ),
+        HandleMsg::CreateViewingKey { entropy, .. } => create_key(
+            deps,
+            env,
+            &config,
+            ContractStatus::StopTransactions.to_u8(),
+            &entropy,
+        ),
+        HandleMsg::SetViewingKey { key, .. } => set_key(
+            deps,
+            env,
+            &config,
+            ContractStatus::StopTransactions.to_u8(),
+            key,
+        ),
+        HandleMsg::ChangeAdmin { address, .. } => change_admin(
+            deps,
+            env,
+            &mut config,
+            ContractStatus::StopTransactions.to_u8(),
+            &address,
+        ),
+        HandleMsg::MakeOwnershipPrivate { .. } => 
+            make_owner_private(deps, env, &config, ContractStatus::StopTransactions.to_u8()
+        ),
+        
     };
     pad_handle_result(response, BLOCK_SIZE)
 }
 
-pub fn try_receive<S: Storage, A: Api, Q: Querier>(
+/// Returns HandleResult
+///
+/// makes an address' token ownership private
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a reference to the Config
+/// * `priority` - u8 representation of highest status level this action is permitted at
+pub fn make_owner_private<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
-    sender: HumanAddr,
-    from: HumanAddr,
-    token_ids: &[String],
-    msg: Option<Binary>,
-    code_hash: String,
+    env: Env,
+    config: &Config,
+    priority: u8,
 ) -> HandleResult {
-    if token_ids.len() != 1 {
-        return Err(StdError::generic_err("You may only send one token!"));
+    check_status(config.status, priority)?;
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    // only need to do this if the contract has public ownership
+    if config.owner_is_public {
+        let mut priv_store = PrefixedStorage::new(PREFIX_OWNER_PRIV, &mut deps.storage);
+        save(&mut priv_store, sender_raw.as_slice(), &false)?
     }
-    let mut config: Config = load(&deps.storage, CONFIG_KEY)?;
+    Ok(HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::MakeOwnershipPrivate {
+            status: Success,
+        })?),
+    })
+}
 
-    // let sender_raw = deps.api.canonical_address(&env.message.sender)?;
-    // let contract_addr = deps.api.canonical_address(&env.contract);
-    //let amount_sent = env.message.sent_funds;
-
-    // increment token count
-    config.token_cnt = config.token_cnt.checked_add(1).ok_or_else(|| {
-        StdError::generic_err("Attempting to receive more tokens than the implementation limit")
-    })?;
-    save(&mut deps.storage, CONFIG_KEY, &config)?;
-
-    let mut token_store = PrefixedStorage::new(PREFIX_SELLERS, &mut deps.storage);
-    save(&mut token_store, SELLER.to_string().as_bytes(), &token_ids)?;
+/// Returns HandleResult
+///
+/// transfer a token
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `priority` - u8 representation of highest ContractStatus level this action is permitted
+/// * `recipient` - the address receiving the token
+/// * `token_id` - token id String of token to be transferred
+/// * `memo` - optional memo for the mint tx
+pub fn transfer_nft<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    priority: u8,
+    recipient: HumanAddr,
+    token_id: String,
+    memo: Option<String>,
+) -> HandleResult {
+    check_status(config.status, priority)?;
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    let transfers = Some(vec![Transfer {
+        recipient,
+        token_ids: vec![token_id],
+        memo,
+    }]);
+    let _m = send_list(deps, &env, config, &sender_raw, transfers, None)?;
 
     let res = HandleResponse {
         messages: vec![],
         log: vec![],
-        data: Some(to_binary(&HandleAnswer::BatchReceiveNft {
-            status: Success,
-        })?),
+        data: Some(to_binary(&HandleAnswer::TransferNft { status: Success })?),
     };
     Ok(res)
 }
+
+/// Returns HandleResult
+///
+/// sends a token to a contract, and calls that contract's ReceiveNft.  Will error if the
+/// contract has not registered its ReceiveNft
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `priority` - u8 representation of highest ContractStatus level this action is permitted
+/// * `contract` - the address of the contract receiving the token
+/// * `receiver_info` - optional code hash and BatchReceiveNft implementation status of
+///                     the recipient contract
+/// * `token_id` - ID String of the token that was sent
+/// * `msg` - optional msg used to control ReceiveNft logic
+/// * `memo` - optional memo for the mint tx
+#[allow(clippy::too_many_arguments)]
+fn send_nft<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    priority: u8,
+    contract: HumanAddr,
+    receiver_info: Option<ReceiverInfo>,
+    token_id: String,
+    msg: Option<Binary>,
+    memo: Option<String>,
+) -> HandleResult {
+    check_status(config.status, priority)?;
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    let sends = Some(vec![Send {
+        contract,
+        receiver_info,
+        token_ids: vec![token_id],
+        msg,
+        memo,
+    }]);
+    let messages = send_list(deps, &env, config, &sender_raw, None, sends)?;
+
+    let res = HandleResponse {
+        messages,
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::SendNft { status: Success })?),
+    };
+    Ok(res)
+}
+
+/// Returns HandleResult
+///
+/// creates a viewing key
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a reference to the Config
+/// * `priority` - u8 representation of highest ContractStatus level this action is permitted
+/// * `entropy` - string slice of the input String to be used as entropy in randomization
+pub fn create_key<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &Config,
+    priority: u8,
+    entropy: &str,
+) -> HandleResult {
+    check_status(config.status, priority)?;
+    let prng_seed: Vec<u8> = load(&deps.storage, PRNG_SEED_KEY)?;
+    let key = ViewingKey::new(&env, &prng_seed, entropy.as_ref());
+    let message_sender = deps.api.canonical_address(&env.message.sender)?;
+    let mut key_store = PrefixedStorage::new(PREFIX_VIEW_KEY, &mut deps.storage);
+    save(&mut key_store, message_sender.as_slice(), &key.to_hashed())?;
+    Ok(HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::ViewingKey {
+            key: format!("{}", key),
+        })?),
+    })
+}
+
+/// Returns HandleResult
+///
+/// sets the viewing key to the input String
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a reference to the Config
+/// * `priority` - u8 representation of highest ContractStatus level this action is permitted
+/// * `key` - String to be used as the viewing key
+pub fn set_key<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &Config,
+    priority: u8,
+    key: String,
+) -> HandleResult {
+    check_status(config.status, priority)?;
+    let vk = ViewingKey(key.clone());
+    let message_sender = deps.api.canonical_address(&env.message.sender)?;
+    let mut key_store = PrefixedStorage::new(PREFIX_VIEW_KEY, &mut deps.storage);
+    save(&mut key_store, message_sender.as_slice(), &vk.to_hashed())?;
+    Ok(HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::ViewingKey { key })?),
+    })
+}
+
+/// Returns HandleResult
+///
+/// change the admin address
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `priority` - u8 representation of highest ContractStatus level this action is permitted
+/// * `address` - new admin address
+pub fn change_admin<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    priority: u8,
+    address: &HumanAddr,
+) -> HandleResult {
+    check_status(config.status, priority)?;
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    if config.admin != sender_raw {
+        return Err(StdError::generic_err(
+            "This is an admin command and can only be run from the admin address",
+        ));
+    }
+    let new_admin = deps.api.canonical_address(address)?;
+    if new_admin != config.admin {
+        config.admin = new_admin;
+        save(&mut deps.storage, CONFIG_KEY, &config)?;
+    }
+    Ok(HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::ChangeAdmin { status: Success })?),
+    })
+}
+
+// pub fn try_receive<S: Storage, A: Api, Q: Querier>(
+//     deps: &mut Extern<S, A, Q>,
+//     sender: HumanAddr,
+//     from: HumanAddr,
+//     token_ids: &[String],
+//     msg: Option<Binary>,
+//     code_hash: String,
+// ) -> HandleResult {
+//     if token_ids.len() != 1 {
+//         return Err(StdError::generic_err("You may only send one token!"));
+//     }
+//     let mut config: Config = load(&deps.storage, CONFIG_KEY)?;
+
+//     // let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+//     // let contract_addr = deps.api.canonical_address(&env.contract);
+//     //let amount_sent = env.message.sent_funds;
+
+//     // increment token count
+//     config.token_cnt = config.token_cnt.checked_add(1).ok_or_else(|| {
+//         StdError::generic_err("Attempting to receive more tokens than the implementation limit")
+//     })?;
+//     save(&mut deps.storage, CONFIG_KEY, &config)?;
+
+//     let mut token_store = PrefixedStorage::new(PREFIX_SELLERS, &mut deps.storage);
+//     save(&mut token_store, SELLER.to_string().as_bytes(), &token_ids)?;
+
+//     let res = HandleResponse {
+//         messages: vec![],
+//         log: vec![],
+//         data: Some(to_binary(&HandleAnswer::BatchReceiveNft {
+//             status: Success,
+//         })?),
+//     };
+//     Ok(res)
+// }
 
 /// Returns HandleResult
 ///
@@ -332,99 +602,6 @@ fn update_owner_inventory<S: Storage>(
     Ok(())
 }
 
-/////////////////////////////////////// Query /////////////////////////////////////
-/// Returns QueryResult
-///
-/// # Arguments
-///
-/// * `deps` - reference to Extern containing all the contract's external dependencies
-/// * `msg` - QueryMsg passed in with the query call
-pub fn query<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>, msg: QueryMsg) -> QueryResult {
-    let response = match msg {
-        QueryMsg::ContractInfo {} => query_contract_info(&deps.storage),
-        QueryMsg::ContractCreator {} => query_contract_creator(deps),
-        QueryMsg::ContractConfig {} => query_config(&deps.storage),
-        QueryMsg::RegisteredCodeHash { contract } => query_code_hash(deps, &contract),
-    };
-    pad_query_result(response, BLOCK_SIZE)
-}
-
-/// Returns QueryResult displaying the contract's creator
-///
-/// # Arguments
-///
-/// * `deps` - a reference to Extern containing all the contract's external dependencies
-pub fn query_contract_creator<S: Storage, A: Api, Q: Querier>(
-    deps: &Extern<S, A, Q>,
-) -> QueryResult {
-    let creator_raw: CanonicalAddr = load(&deps.storage, CREATOR_KEY)?;
-    to_binary(&QueryAnswer::ContractCreator {
-        creator: Some(deps.api.human_address(&creator_raw)?),
-    })
-}
-
-/// Returns QueryResult displaying the contract's name and symbol
-///
-/// # Arguments
-///
-/// * `storage` - a reference to the contract's storage
-pub fn query_contract_info<S: ReadonlyStorage>(storage: &S) -> QueryResult {
-    let config: Config = load(storage, CONFIG_KEY)?;
-
-    to_binary(&QueryAnswer::ContractInfo { name: config.name })
-}
-
-/// Returns QueryResult displaying the contract's configuration
-///
-/// # Arguments
-///
-/// * `storage` - a reference to the contract's storage
-pub fn query_config<S: ReadonlyStorage>(storage: &S) -> QueryResult {
-    let config: Config = load(storage, CONFIG_KEY)?;
-
-    to_binary(&QueryAnswer::ContractConfig {
-        token_supply_is_public: config.token_supply_is_public,
-        owner_is_public: config.owner_is_public,
-    })
-}
-
-/// Returns QueryResult displaying the registered code hash of the specified contract if
-/// it has registered and whether the contract implements BatchReceiveNft
-///
-/// # Arguments
-///
-/// * `deps` - a reference to Extern containing all the contract's external dependencies
-/// * `contract` - a reference to the contract's address whose code hash is being requested
-pub fn query_code_hash<S: Storage, A: Api, Q: Querier>(
-    deps: &Extern<S, A, Q>,
-    contract: &HumanAddr,
-) -> QueryResult {
-    let contract_raw = deps.api.canonical_address(contract)?;
-    let store = ReadonlyPrefixedStorage::new(PREFIX_RECEIVERS, &deps.storage);
-    let may_reg_rec: Option<ReceiveRegistration> = may_load(&store, contract_raw.as_slice())?;
-    if let Some(reg_rec) = may_reg_rec {
-        return to_binary(&QueryAnswer::RegisteredCodeHash {
-            code_hash: Some(reg_rec.code_hash),
-            also_implements_batch_receive_nft: reg_rec.impl_batch,
-        });
-    }
-    to_binary(&QueryAnswer::RegisteredCodeHash {
-        code_hash: None,
-        also_implements_batch_receive_nft: false,
-    })
-}
-
-// permission type info
-pub struct PermissionTypeInfo {
-    // index for view owner permission
-    pub view_owner_idx: usize,
-    // index for view private metadata permission
-    pub view_meta_idx: usize,
-    // index for transfer permission
-    pub transfer_idx: usize,
-    // number of permission types
-    pub num_types: usize,
-}
 
 /// Returns StdResult<()> that will error if the priority level of the action is not
 /// equal to or greater than the current contract status level
@@ -442,21 +619,6 @@ fn check_status(contract_status: u8, priority: u8) -> StdResult<()> {
     Ok(())
 }
 
-// a receiver, their code hash, and whether they implement BatchReceiveNft
-pub struct CacheReceiverInfo {
-    // the contract address
-    pub contract: CanonicalAddr,
-    // the contract's registration info
-    pub registration: ReceiveRegistration,
-}
-
-// an owner's inventory and the tokens they lost in this tx
-pub struct InventoryUpdate {
-    // owner's inventory
-    pub inventory: Inventory,
-    // the list of lost tokens
-    pub remove: HashSet<u32>,
-}
 
 /// Returns StdResult<CanonicalAddr>
 ///
@@ -586,7 +748,7 @@ fn receiver_callback_msgs<S: Storage, A: Api, Q: Querier>(
     msg: &Option<Binary>,
     sender: &HumanAddr,
     receivers: &mut Vec<CacheReceiverInfo>,
-) -> HandleResult {
+) -> StdResult<Vec<CosmosMsg>> {
     let (code_hash, impl_batch) = if let Some(supplied) = receiver_info {
         (
             supplied.recipient_code_hash,
@@ -611,116 +773,211 @@ fn receiver_callback_msgs<S: Storage, A: Api, Q: Querier>(
         receivers.push(receiver);
         (registration.code_hash, registration.impl_batch)
     };
-
+    let mut callbacks: Vec<CosmosMsg> = Vec::new();
     for send_from in send_from_list.into_iter() {
         // if BatchReceiveNft is implemented, use it
         if impl_batch {
-            return Ok(HandleResponse {
-                messages: vec![],
-                log: vec![],
-                data: Some(to_binary(&HandleAnswer::BatchReceiveNft {
-                    status: Success,
-                })?),
-            });
+            callbacks.push(batch_receive_nft_msg(
+                deps,
+                sender.clone(),
+                send_from.owner,
+                send_from.token_ids,
+                msg.clone(),
+                code_hash.clone(),
+                contract_human.clone(),
+            )?);
+        //otherwise do a bunch of BatchReceiveNft
+        } else {
+            for token_id in send_from.token_ids.into_iter() {
+                callbacks.push(receive_nft_msg(
+                    deps,
+                    send_from.owner.clone(),
+                    token_id,
+                    msg.clone(),
+                    code_hash.clone(),
+                    contract_human.clone(),
+                )?);
+            }
         }
     }
-    Ok(HandleResponse {
-        messages: vec![],
-        log: vec![],
-        data: Some(to_binary(&HandleAnswer::BatchReceiveNft {
-            status: Failure,
-        })?),
+    Ok(callbacks)
+}
+
+
+
+/////////////////////////////////////// Query /////////////////////////////////////
+/// Returns QueryResult
+///
+/// # Arguments
+///
+/// * `deps` - reference to Extern containing all the contract's external dependencies
+/// * `msg` - QueryMsg passed in with the query call
+pub fn query<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>, msg: QueryMsg) -> QueryResult {
+    let response = match msg {
+        QueryMsg::ContractInfo {} => query_contract_info(&deps.storage),
+        QueryMsg::ContractCreator {} => query_contract_creator(deps),
+        QueryMsg::ContractConfig {} => query_config(&deps.storage),
+        QueryMsg::RegisteredCodeHash { contract } => query_code_hash(deps, &contract),
+    };
+    pad_query_result(response, BLOCK_SIZE)
+}
+
+/// Returns QueryResult displaying the contract's creator
+///
+/// # Arguments
+///
+/// * `deps` - a reference to Extern containing all the contract's external dependencies
+pub fn query_contract_creator<S: Storage, A: Api, Q: Querier>(
+    deps: &Extern<S, A, Q>,
+) -> QueryResult {
+    let creator_raw: CanonicalAddr = load(&deps.storage, CREATOR_KEY)?;
+    to_binary(&QueryAnswer::ContractCreator {
+        creator: Some(deps.api.human_address(&creator_raw)?),
     })
 }
 
-// /// Returns StdResult<Vec<CosmosMsg>>
-// ///
-// /// transfer or sends a list of tokens and returns a list of ReceiveNft callbacks if applicable
-// ///
-// /// # Arguments
-// ///
-// /// * `deps` - a mutable reference to Extern containing all the contract's external dependencies
-// /// * `env` - a reference to the Env of the contract's environment
-// /// * `config` - a mutable reference to the Config
-// /// * `sender` - a reference to the message sender address
-// /// * `transfers` - optional list of transfers to perform
-// /// * `sends` - optional list of sends to perform
-// fn send_list<S: Storage, A: Api, Q: Querier>(
-//     deps: &mut Extern<S, A, Q>,
-//     env: &Env,
-//     config: &mut Config,
-//     sender: &CanonicalAddr,
-//     transfers: Option<Vec<Transfer>>,
-//     sends: Option<Vec<Send>>,
-// ) -> StdResult<Vec<CosmosMsg>> {
-//     let mut messages: Vec<CosmosMsg> = Vec::new();
-//     let mut oper_for: Vec<CanonicalAddr> = Vec::new();
-//     let mut inv_updates: Vec<InventoryUpdate> = Vec::new();
-//     let num_perm_types = PermissionType::ViewOwner.num_types();
-//     if let Some(xfers) = transfers {
-//         for xfer in xfers.into_iter() {
-//             let recipient_raw = deps.api.canonical_address(&xfer.recipient)?;
-//             for token_id in xfer.token_ids.into_iter() {
-//                 let _o = transfer_impl(
-//                     deps,
-//                     &env.block,
-//                     config,
-//                     sender,
-//                     token_id,
-//                     recipient_raw.clone(),
-//                     &mut oper_for,
-//                     &mut inv_updates,
-//                     xfer.memo.clone(),
-//                 )?;
-//             }
-//         }
-//     } else if let Some(snds) = sends {
-//         let mut receivers = Vec::new();
-//         for send in snds.into_iter() {
-//             let contract_raw = deps.api.canonical_address(&send.contract)?;
-//             let mut send_from_list: Vec<SendFrom> = Vec::new();
-//             for token_id in send.token_ids.into_iter() {
-//                 let owner_raw = transfer_impl(
-//                     deps,
-//                     &env.block,
-//                     config,
-//                     sender,
-//                     token_id.clone(),
-//                     contract_raw.clone(),
-//                     &mut oper_for,
-//                     &mut inv_updates,
-//                     send.memo.clone(),
-//                 )?;
-//                 // compile list of all tokens being sent from each owner in this Send
-//                 let owner = deps.api.human_address(&owner_raw)?;
-//                 if let Some(sd_fm) = send_from_list.iter_mut().find(|s| s.owner == owner) {
-//                     sd_fm.token_ids.push(token_id.clone());
-//                 } else {
-//                     let new_sd_fm = SendFrom {
-//                         owner,
-//                         token_ids: vec![token_id.clone()],
-//                     };
-//                     send_from_list.push(new_sd_fm);
-//                 }
-//             }
-//             // get BatchReceiveNft and ReceiveNft msgs for all the tokens sent in this Send
-//             messages.extend(receiver_callback_msgs(
-//                 &mut deps,
-//                 env,
-//                 &send.contract,
-//                 &contract_raw,
-//                 send.receiver_info,
-//                 send_from_list,
-//                 &send.msg,
-//                 &env.message.sender,
-//                 &mut receivers,
-//             )?);
-//         }
-//     }
-//     save(&mut deps.storage, CONFIG_KEY, &config)?;
-//     update_owner_inventory(&mut deps.storage, &inv_updates, num_perm_types)?;
-//     Ok(messages)
-// }
+/// Returns QueryResult displaying the contract's name and symbol
+///
+/// # Arguments
+///
+/// * `storage` - a reference to the contract's storage
+pub fn query_contract_info<S: ReadonlyStorage>(storage: &S) -> QueryResult {
+    let config: Config = load(storage, CONFIG_KEY)?;
+
+    to_binary(&QueryAnswer::ContractInfo { name: config.name })
+}
+
+/// Returns QueryResult displaying the contract's configuration
+///
+/// # Arguments
+///
+/// * `storage` - a reference to the contract's storage
+pub fn query_config<S: ReadonlyStorage>(storage: &S) -> QueryResult {
+    let config: Config = load(storage, CONFIG_KEY)?;
+
+    to_binary(&QueryAnswer::ContractConfig {
+        token_supply_is_public: config.token_supply_is_public,
+        owner_is_public: config.owner_is_public,
+    })
+}
+
+/// Returns QueryResult displaying the registered code hash of the specified contract if
+/// it has registered and whether the contract implements BatchReceiveNft
+///
+/// # Arguments
+///
+/// * `deps` - a reference to Extern containing all the contract's external dependencies
+/// * `contract` - a reference to the contract's address whose code hash is being requested
+pub fn query_code_hash<S: Storage, A: Api, Q: Querier>(
+    deps: &Extern<S, A, Q>,
+    contract: &HumanAddr,
+) -> QueryResult {
+    let contract_raw = deps.api.canonical_address(contract)?;
+    let store = ReadonlyPrefixedStorage::new(PREFIX_RECEIVERS, &deps.storage);
+    let may_reg_rec: Option<ReceiveRegistration> = may_load(&store, contract_raw.as_slice())?;
+    if let Some(reg_rec) = may_reg_rec {
+        return to_binary(&QueryAnswer::RegisteredCodeHash {
+            code_hash: Some(reg_rec.code_hash),
+            also_implements_batch_receive_nft: reg_rec.impl_batch,
+        });
+    }
+    to_binary(&QueryAnswer::RegisteredCodeHash {
+        code_hash: None,
+        also_implements_batch_receive_nft: false,
+    })
+}
+
+
+/// Returns StdResult<Vec<CosmosMsg>>
+///
+/// transfer or sends a list of tokens and returns a list of ReceiveNft callbacks if applicable
+///
+/// # Arguments
+///
+/// * `deps` - a mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - a reference to the Env of the contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `sender` - a reference to the message sender address
+/// * `transfers` - optional list of transfers to perform
+/// * `sends` - optional list of sends to perform
+fn send_list<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: &Env,
+    config: &mut Config,
+    sender: &CanonicalAddr,
+    transfers: Option<Vec<Transfer>>,
+    sends: Option<Vec<Send>>,
+) -> StdResult<Vec<CosmosMsg>> {
+    let mut messages: Vec<CosmosMsg> = Vec::new();
+    let mut oper_for: Vec<CanonicalAddr> = Vec::new();
+    let mut inv_updates: Vec<InventoryUpdate> = Vec::new();
+    let num_perm_types = PermissionType::ViewOwner.num_types();
+    if let Some(xfers) = transfers {
+        for xfer in xfers.into_iter() {
+            let recipient_raw = deps.api.canonical_address(&xfer.recipient)?;
+            for token_id in xfer.token_ids.into_iter() {
+                let _o = transfer_impl(
+                    deps,
+                    &env.block,
+                    config,
+                    sender,
+                    token_id,
+                    recipient_raw.clone(),
+                    &mut oper_for,
+                    &mut inv_updates,
+                    xfer.memo.clone(),
+                )?;
+            }
+        }
+    } else if let Some(snds) = sends {
+        let mut receivers = Vec::new();
+        for send in snds.into_iter() {
+            let contract_raw = deps.api.canonical_address(&send.contract)?;
+            let mut send_from_list: Vec<SendFrom> = Vec::new();
+            for token_id in send.token_ids.into_iter() {
+                let owner_raw = transfer_impl(
+                    deps,
+                    &env.block,
+                    config,
+                    sender,
+                    token_id.clone(),
+                    contract_raw.clone(),
+                    &mut oper_for,
+                    &mut inv_updates,
+                    send.memo.clone(),
+                )?;
+                // compile list of all tokens being sent from each owner in this Send
+                let owner = deps.api.human_address(&owner_raw)?;
+                if let Some(sd_fm) = send_from_list.iter_mut().find(|s| s.owner == owner) {
+                    sd_fm.token_ids.push(token_id.clone());
+                } else {
+                    let new_sd_fm = SendFrom {
+                        owner,
+                        token_ids: vec![token_id.clone()],
+                    };
+                    send_from_list.push(new_sd_fm);
+                }
+            }
+            // get BatchReceiveNft and ReceiveNft msgs for all the tokens sent in this Send
+            messages.extend(receiver_callback_msgs(
+                deps,
+                &env,
+                &send.contract,
+                &contract_raw,
+                send.receiver_info,
+                send_from_list,
+                &send.msg,
+                &env.message.sender,
+                &mut receivers,
+            )?);
+        }
+    }
+    save(&mut deps.storage, CONFIG_KEY, &config)?;
+    update_owner_inventory(&mut deps.storage, &inv_updates, num_perm_types)?;
+    Ok(messages)
+}
+
+
 /// Returns StdResult<()>
 ///
 /// returns Ok if the address has permission or an error if not
