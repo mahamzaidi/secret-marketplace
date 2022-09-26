@@ -9,6 +9,7 @@ use crate::token::{Extension, Metadata};
 use secret_toolkit::permit::Permit;
 
 
+
 /// Instantiation message
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct InitMsg {
@@ -141,7 +142,13 @@ pub enum HandleMsg {
         /// optional message length padding
         padding: Option<String>,
     },
-
+    ListNft{
+        token_id: String,
+        sale_price: u32,
+        available_for_auction: bool, 
+        msg: Option<Binary>,
+        memo: Option<String>,      
+    },
 }
 
 /// send token info used when doing a BatchSendNft
@@ -175,6 +182,14 @@ pub enum AccessLevel {
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
+pub enum AuctionStatus {
+    NotUpForAuction,
+    AuctionInProgress,
+    AuctionClosed,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum HandleAnswer {
     RegisterReceiveNft {
         status: ResponseStatus,
@@ -198,6 +213,9 @@ pub enum HandleAnswer {
     ChangeAdmin {
         status: ResponseStatus,
     },
+    ListNft {
+        status: ResponseStatus,
+    }
 }
 
 /// response of CW721 OwnerOf

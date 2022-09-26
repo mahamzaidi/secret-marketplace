@@ -18,11 +18,12 @@ use crate::inventory::{Inventory, InventoryIter};
 use crate::msg::{
     AccessLevel, ContractStatus, HandleAnswer, HandleMsg, InitMsg, QueryAnswer, QueryMsg,
     ReceiverInfo, ResponseStatus::{Failure, Success}, Send, Transfer, ViewerInfo,
-    Cw721OwnerOfResponse, Cw721Approval,
+    Cw721OwnerOfResponse, Cw721Approval, AuctionStatus,
 };
 use crate::state::{
-    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_SELLERS, PREFIX_TX_IDS, PRNG_SEED_KEY, PREFIX_VIEW_KEY, PREFIX_PUB_META, PREFIX_PRIV_META, MINTERS_KEY,
+    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_SELLERS, PREFIX_TX_IDS, PRNG_SEED_KEY, PREFIX_VIEW_KEY, PREFIX_PUB_META, PREFIX_PRIV_META, MINTERS_KEY, PREFIX_PRICE_KEY, PREFIX_AUCTION_KEY,
 };
+
 use crate::token::{Metadata, Token};
 use crate::receiver::{receive_nft_msg, batch_receive_nft_msg, Snip721ReceiveMsg::{ReceiveNft, BatchReceiveNft}};
 use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
@@ -225,9 +226,74 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
         HandleMsg::MakeOwnershipPrivate { .. } => 
             make_owner_private(deps, env, &config, ContractStatus::StopTransactions.to_u8()
         ),
+        HandleMsg::ListNft{
+            token_id,
+            sale_price,
+            available_for_auction,
+            msg,
+            memo,
+        } => list_nft (
+            deps, 
+            env, 
+            &mut config, 
+            ContractStatus::Normal.to_u8(),
+            token_id, 
+            sale_price,
+            available_for_auction,
+            msg,
+            memo,
+        ),
         
     };
     pad_handle_result(response, BLOCK_SIZE)
+}
+
+pub fn list_nft<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    priority: u8,
+    token_id: String,
+    sale_price: u32,
+    available_for_auction: bool,
+    msg: Option<Binary>,
+    memo: Option<String>,
+) -> HandleResult {
+    check_status(config.status, priority)?;
+    if sale_price < 0 {
+        return Err(StdError::generic_err(
+            "Sale price must be greater than 0",
+        ));
+    }
+
+    let binding = env.message.sender.to_string();
+    let key: &[u8] = &binding.as_bytes();
+    let val = &key;
+    let mut price = PrefixedStorage::new(PREFIX_PRICE_KEY, &mut deps.storage);
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    let recipient = env.contract.address.clone();
+    
+    if(available_for_auction){
+        let mut auction = PrefixedStorage::new(PREFIX_AUCTION_KEY, &mut deps.storage);
+        save(&mut auction, val, &token_id)?;     
+    }
+
+    let messages = transfer_nft(
+        deps, 
+        env, 
+        config,
+        ContractStatus::Normal.to_u8(),
+        recipient,
+        token_id,
+        memo,
+    )?;
+
+    let res = HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::ListNft { status: Success })?),
+    };
+    Ok(res)
 }
 
 /// Returns HandleResult
@@ -300,6 +366,8 @@ pub fn transfer_nft<S: Storage, A: Api, Q: Querier>(
     };
     Ok(res)
 }
+
+
 
 /// Returns HandleResult
 ///
