@@ -68,6 +68,8 @@ pub struct Config {
     pub tx_cnt: u64,
     /// contract status
     pub status: u8,
+    /// count of mint ops
+    pub mint_cnt: u32,
     /// are token IDs/count public
     pub token_supply_is_public: bool,
     /// is ownership public
@@ -78,6 +80,16 @@ pub struct Config {
     pub entropy: String,
     /// viewing key used with the contract
     pub viewing_key: String,
+    /// is sealed metadata enabled
+    pub sealed_metadata_is_enabled: bool,
+    /// should Reveal unwrap to private metadata
+    pub unwrap_to_private: bool,
+    /// is a minter permitted to update a token's metadata
+    pub minter_may_update_metadata: bool,
+    /// is the token's owner permitted to update the token's metadata
+    pub owner_may_update_metadata: bool,
+    /// is burn enabled
+    pub burn_is_enabled: bool,
 
 }
 

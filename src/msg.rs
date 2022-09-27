@@ -37,6 +37,20 @@ pub struct InitConfig {
     /// ownership of their tokens is public or private
     /// default: False
     pub public_owner: Option<bool>,
+    pub enable_sealed_metadata: Option<bool>,
+    /// indicates if the Reveal function should keep the sealed metadata private after unwrapping
+    /// This config value is ignored if sealed metadata is not enabled
+    /// default: False
+    pub unwrapped_metadata_is_private: Option<bool>,
+    /// indicates whether a minter is permitted to update a token's metadata
+    /// default: True
+    pub minter_may_update_metadata: Option<bool>,
+    /// indicates whether the owner of a token is permitted to update a token's metadata
+    /// default: False
+    pub owner_may_update_metadata: Option<bool>,
+    /// Indicates whether burn functionality should be enabled
+    /// default: False
+    pub enable_burn: Option<bool>,
 }
 
 impl Default for InitConfig {
@@ -44,6 +58,11 @@ impl Default for InitConfig {
         InitConfig {
             public_token_supply: Some(true),
             public_owner: Some(true),
+            enable_sealed_metadata: Some(false),
+            unwrapped_metadata_is_private: Some(false),
+            minter_may_update_metadata: Some(false),
+            owner_may_update_metadata: Some(false),
+            enable_burn: Some(false),
         }
     }
 }
@@ -143,12 +162,29 @@ pub enum HandleMsg {
         padding: Option<String>,
     },
     ListNft{
-        token_id: String,
+        token_lists: Vec<List>,
         sale_price: u32,
-        available_for_auction: bool, 
         msg: Option<Binary>,
         memo: Option<String>,      
     },
+}
+
+
+/// token list info 
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct List {
+    /// optional token id, if omitted, use current token index
+    pub token_id: Option<String>,
+    /// optional owner address, owned by the minter otherwise
+    pub owner: Option<HumanAddr>,
+    /// optional public metadata that can be seen by everyone
+    pub public_metadata: Option<Metadata>,
+    /// optional private metadata that can only be seen by owner and whitelist
+    pub private_metadata: Option<Metadata>,
+    /// optionally true if the token is transferable.  Defaults to true if omitted
+    pub transferable: Option<bool>,
+    /// optional memo for the tx
+    pub memo: Option<String>,
 }
 
 /// send token info used when doing a BatchSendNft
@@ -180,13 +216,13 @@ pub enum AccessLevel {
     None,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum AuctionStatus {
-    NotUpForAuction,
-    AuctionInProgress,
-    AuctionClosed,
-}
+// #[derive(Serialize, Deserialize, JsonSchema, Debug)]
+// #[serde(rename_all = "snake_case")]
+// pub enum AuctionStatus {
+//     NotUpForAuction,
+//     AuctionInProgress,
+//     AuctionClosed,
+// }
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -215,7 +251,7 @@ pub enum HandleAnswer {
     },
     ListNft {
         status: ResponseStatus,
-    }
+    },
 }
 
 /// response of CW721 OwnerOf

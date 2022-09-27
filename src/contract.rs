@@ -18,7 +18,7 @@ use crate::inventory::{Inventory, InventoryIter};
 use crate::msg::{
     AccessLevel, ContractStatus, HandleAnswer, HandleMsg, InitMsg, QueryAnswer, QueryMsg,
     ReceiverInfo, ResponseStatus::{Failure, Success}, Send, Transfer, ViewerInfo,
-    Cw721OwnerOfResponse, Cw721Approval, AuctionStatus,
+    Cw721OwnerOfResponse, Cw721Approval, List,
 };
 use crate::state::{
     json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_SELLERS, PREFIX_TX_IDS, PRNG_SEED_KEY, PREFIX_VIEW_KEY, PREFIX_PUB_META, PREFIX_PRIV_META, MINTERS_KEY, PREFIX_PRICE_KEY, PREFIX_AUCTION_KEY,
@@ -78,15 +78,21 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
         admin: admin_raw.clone(),
         token_cnt: 0,
         tx_cnt: 0,
+        mint_cnt: 0,
         status: ContractStatus::Normal.to_u8(),
         token_supply_is_public: init_config.public_token_supply.unwrap_or(true),
         owner_is_public: init_config.public_owner.unwrap_or(true),
         prng_seed: ps.to_vec(),
         entropy: String::default(),
         viewing_key: view_key,
+        sealed_metadata_is_enabled: init_config.enable_sealed_metadata.unwrap_or(false),
+        unwrap_to_private: init_config.unwrapped_metadata_is_private.unwrap_or(false),
+        minter_may_update_metadata: init_config.minter_may_update_metadata.unwrap_or(false),
+        owner_may_update_metadata: init_config.owner_may_update_metadata.unwrap_or(false),
+        burn_is_enabled: init_config.enable_burn.unwrap_or(false),
+
     };
 
-    let count = 0;
 
     save(&mut deps.storage, CONFIG_KEY, &config)?;
     save(&mut deps.storage, PRNG_SEED_KEY, &prng_seed)?;
@@ -227,9 +233,8 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             make_owner_private(deps, env, &config, ContractStatus::StopTransactions.to_u8()
         ),
         HandleMsg::ListNft{
-            token_id,
+            token_lists,
             sale_price,
-            available_for_auction,
             msg,
             memo,
         } => list_nft (
@@ -237,9 +242,8 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             env, 
             &mut config, 
             ContractStatus::Normal.to_u8(),
-            token_id, 
+            token_lists, 
             sale_price,
-            available_for_auction,
             msg,
             memo,
         ),
@@ -253,9 +257,8 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     env: Env,
     config: &mut Config,
     priority: u8,
-    token_id: String,
+    lists : Vec<List>,
     sale_price: u32,
-    available_for_auction: bool,
     msg: Option<Binary>,
     memo: Option<String>,
 ) -> HandleResult {
@@ -265,18 +268,93 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
             "Sale price must be greater than 0",
         ));
     }
+    let mut inventories: Vec<Inventory> = Vec::new();
+    let mut listed: Vec<String> = Vec::new();
+    let trans_list = lists.clone();
 
     let binding = env.message.sender.to_string();
     let key: &[u8] = &binding.as_bytes();
     let val = &key;
-    let mut price = PrefixedStorage::new(PREFIX_PRICE_KEY, &mut deps.storage);
+
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+
     let recipient = env.contract.address.clone();
     
-    if(available_for_auction){
-        let mut auction = PrefixedStorage::new(PREFIX_AUCTION_KEY, &mut deps.storage);
-        save(&mut auction, val, &token_id)?;     
+    // if(available_for_auction){
+    //     let mut auction = PrefixedStorage::new(PREFIX_AUCTION_KEY, &mut deps.storage);
+    //     save(&mut auction, val, &token_id)?;     
+    // }
+    for list in lists.into_iter() {
+        // let mut price = PrefixedStorage::new(PREFIX_PRICE_KEY, &mut deps.storage);
+        // save(&mut price, list.token_id, &sale_price)?;
+        let id = list.token_id.unwrap_or(format!("{}", config.token_cnt));
+        // check if id already exists
+        let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
+        let may_exist: Option<u32> = may_load(&map2idx, id.as_bytes())?;
+        if may_exist.is_some() {
+            return Err(StdError::generic_err(format!(
+                "Token ID {} is already in use",
+                id
+            )));
+        }
+        // increment token count
+        config.token_cnt = config.token_cnt.checked_add(1).ok_or_else(|| {
+            StdError::generic_err("Attempting to mint more tokens than the implementation limit")
+        })?;
+        // map new token id to its index
+        save(&mut map2idx, id.as_bytes(), &config.token_cnt);
+
+        let transferable = list.transferable.unwrap_or(true);
+        
+
+        let token = Token {
+            owner:deps.api.canonical_address(&env.message.sender)?,
+            permissions: Vec::new(),
+            unwrapped: !config.sealed_metadata_is_enabled,
+            transferable,
+        };
+
+        // save new token info
+        let token_key = config.token_cnt.to_le_bytes();
+        let mut info_store = PrefixedStorage::new(PREFIX_INFOS, &mut deps.storage);
+            json_save(&mut info_store, &token_key, &token)?;
+
+        // add token to owner's list
+        let inventory = if let Some(inv) = inventories.iter_mut().find(|i| i.owner == token.owner) {
+            inv
+        } else {
+            let new_inv = Inventory::new(&deps.storage, token.owner.clone())?;
+            inventories.push(new_inv);
+            inventories.last_mut().ok_or_else(|| {
+                StdError::generic_err("Just pushed an Inventory so this can not happen")
+            })?
+        };
+        inventory.insert(&mut deps.storage, config.token_cnt, false)?;
+
+        // map index to id
+        let mut map2id = PrefixedStorage::new(PREFIX_MAP_TO_ID, &mut deps.storage);
+        save(&mut map2id, &token_key, &id)?;
+
+        if let Some(pub_meta) = list.public_metadata{
+            enforce_metadata_field_exclusion(&pub_meta)?;
+                let mut pub_store = PrefixedStorage::new(PREFIX_PUB_META, &mut deps.storage);
+                save(&mut pub_store, &token_key, &pub_meta)?;
+        }
+
+        if let Some(priv_meta) = list.private_metadata {
+            enforce_metadata_field_exclusion(&priv_meta)?;
+            let mut priv_store = PrefixedStorage::new(PREFIX_PRIV_META, &mut deps.storage);
+            save(&mut priv_store, &token_key, &priv_meta)?;
+        }
+
+    listed.push(id);
+
     }
+    // save all the updated inventories
+    for inventory in inventories.iter() {
+        inventory.save(&mut deps.storage)?;
+    }
+    save(&mut deps.storage, CONFIG_KEY, &config)?;
 
     let messages = transfer_nft(
         deps, 
@@ -284,10 +362,9 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
         config,
         ContractStatus::Normal.to_u8(),
         recipient,
-        token_id,
+        trans_list[0].token_id.as_ref().map(String::as_str).unwrap().to_string(),
         memo,
     )?;
-
     let res = HandleResponse {
         messages: vec![],
         log: vec![],
@@ -295,6 +372,62 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     };
     Ok(res)
 }
+
+/// Returns StdResult<()>
+///
+/// makes sure that Metadata does not have both `token_uri` and `extension`
+///
+/// # Arguments
+///
+/// * `metadata` - a reference to Metadata
+fn enforce_metadata_field_exclusion(metadata: &Metadata) -> StdResult<()> {
+    if metadata.token_uri.is_some() && metadata.extension.is_some() {
+        return Err(StdError::generic_err(
+            "Metadata can not have BOTH token_uri AND extension",
+        ));
+    }
+    Ok(())
+}
+
+/// Returns StdResult<()>
+///
+/// sets new metadata
+///
+/// # Arguments
+///
+/// * `storage` - a mutable reference to the contract's storage
+/// * `token` - a reference to the token whose metadata should be updated
+/// * `idx` - the token identifier index
+/// * `prefix` - storage prefix for the type of metadata being updated
+/// * `metadata` - a reference to the new metadata
+#[allow(clippy::too_many_arguments)]
+fn set_metadata_impl<S: Storage>(
+    storage: &mut S,
+    token: &Token,
+    idx: u32,
+    prefix: &[u8],
+    metadata: &Metadata,
+) -> StdResult<()> {
+    // do not allow the altering of sealed metadata
+    if !token.unwrapped && prefix == PREFIX_PRIV_META {
+        return Err(StdError::generic_err(
+            "The private metadata of a sealed token can not be modified",
+        ));
+    }
+    enforce_metadata_field_exclusion(metadata)?;
+    let mut meta_store = PrefixedStorage::new(prefix, storage);
+    save(&mut meta_store, &idx.to_le_bytes(), metadata)?;
+    Ok(())
+}
+// pub fn sell_nft<S: Storage, A: Api, Q: Querier>(
+//     deps: &mut Extern<S, A, Q>,
+//     env: Env,
+//     config: &mut Config,
+//     priority: u8,
+//     recipient: HumanAddr,
+//     token_id: String,
+//     memo: Option<String>,
+// )
 
 /// Returns HandleResult
 ///
