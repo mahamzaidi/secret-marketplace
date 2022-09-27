@@ -1,3 +1,3 @@
-# marketplcae
+# marketplace
 
 Deployed using secret14cluw2thzf56ktpfnmz4tq88ptmstyscqqm73s
