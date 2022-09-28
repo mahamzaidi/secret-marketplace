@@ -163,7 +163,7 @@ pub enum HandleMsg {
     },
     ListNft{
         token_lists: Vec<List>,
-        sale_price: u32,
+        sale_price: String,
         msg: Option<Binary>,
         memo: Option<String>,      
     },
@@ -376,6 +376,9 @@ pub enum QueryMsg {
     },
      /// display if a token is transferable
      IsTransferable { token_id: String },
+     /// Query the listed token's price
+     ListedPrice {token_id: String},
+
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
@@ -419,6 +422,9 @@ pub enum QueryAnswer {
     },
     NumTokens {
         count: u32,
+    },
+    ListedPrice {
+        price : f64,
     },
 }
 
