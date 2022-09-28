@@ -258,16 +258,19 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     config: &mut Config,
     priority: u8,
     lists : Vec<List>,
-    sale_price: u32,
+    sale_price: String,
     msg: Option<Binary>,
     memo: Option<String>,
 ) -> HandleResult {
     check_status(config.status, priority)?;
-    if sale_price < 0 {
+    let num: u64 = sale_price.parse::<u64>().unwrap();
+    if !num > 0 {
         return Err(StdError::generic_err(
             "Sale price must be greater than 0",
         ));
     }
+    
+
     let mut inventories: Vec<Inventory> = Vec::new();
     let mut listed: Vec<String> = Vec::new();
     let trans_list = lists.clone();
@@ -277,7 +280,6 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     let val = &key;
 
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
-
     let recipient = env.contract.address.clone();
     
     // if(available_for_auction){
@@ -285,8 +287,9 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     //     save(&mut auction, val, &token_id)?;     
     // }
     for list in lists.into_iter() {
-        // let mut price = PrefixedStorage::new(PREFIX_PRICE_KEY, &mut deps.storage);
-        // save(&mut price, list.token_id, &sale_price)?;
+        //save price 
+        let mut price = PrefixedStorage::new(PREFIX_PRICE_KEY, &mut deps.storage);
+        save(&mut price, list.token_id.as_ref().unwrap().as_bytes(), &sale_price)?;
         let id = list.token_id.unwrap_or(format!("{}", config.token_cnt));
         // check if id already exists
         let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
@@ -1053,9 +1056,21 @@ pub fn query<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>, msg: QueryM
             viewing_key,
         } => query_num_owner_tokens(deps, &owner, viewer, viewing_key, None),
         QueryMsg::IsTransferable { token_id } => query_is_transferable(&deps.storage, &token_id),
-
+        QueryMsg::ListedPrice { token_id } => query_listed_price(&deps.storage, &token_id),
     };
     pad_query_result(response, BLOCK_SIZE)
+}
+
+
+pub fn query_listed_price<S: ReadonlyStorage>(storage: &S, token_id: &str) -> QueryResult {
+    let price_store = ReadonlyPrefixedStorage::new(PREFIX_PRICE_KEY, storage);
+    let binding = token_id.to_string();
+    let key: &[u8] = binding.as_bytes();
+    let price: Option<String> = may_load(&price_store, key)?;
+    let num: f64 = price.as_ref().map(String::as_str).unwrap().to_string().parse().unwrap();
+    to_binary(&QueryAnswer::ListedPrice {
+        price: num,
+    })
 }
 
 /// Returns QueryResult displaying true if the token is transferable
