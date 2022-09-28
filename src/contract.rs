@@ -270,7 +270,6 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
         ));
     }
     
-
     let mut inventories: Vec<Inventory> = Vec::new();
     let mut listed: Vec<String> = Vec::new();
     let trans_list = lists.clone();
@@ -307,8 +306,7 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
         // map new token id to its index
         save(&mut map2idx, id.as_bytes(), &config.token_cnt);
 
-        let transferable = list.transferable.unwrap_or(true);
-        
+        let transferable = list.transferable.unwrap_or(true);    
 
         let token = Token {
             owner:deps.api.canonical_address(&env.message.sender)?,

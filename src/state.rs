@@ -52,7 +52,9 @@ pub const PREFIX_PUB_META: &[u8] = b"publicmeta";
 pub const PREFIX_PRIV_META: &[u8] = b"privatemeta";
 /// storage key for minters
 pub const MINTERS_KEY: &[u8] = b"minters";
+/// storage key for token prices
 pub const PREFIX_PRICE_KEY: &[u8] = b"prices";
+/// storage key for token auction
 pub const PREFIX_AUCTION_KEY: &[u8] = b"viewkeys";
 
 /// Token contract config
