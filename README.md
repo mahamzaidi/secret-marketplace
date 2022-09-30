@@ -35,8 +35,11 @@ CreateViewingKey
 
 The HandleAnswers return an Enum variable which is defined in the msg.rs as this
 
-```pub enum ResponseStatus {
+```
+pub enum ResponseStatus {
     Success,
     Failure,
-}```
+}
+
+```
 
