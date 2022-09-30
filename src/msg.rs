@@ -162,10 +162,26 @@ pub enum HandleMsg {
         padding: Option<String>,
     },
     ListNft{
+        token_owner: HumanAddr,
         token_lists: Vec<List>,
         sale_price: String,
         msg: Option<Binary>,
         memo: Option<String>,      
+    },
+    ReceiveNft{
+        sender: HumanAddr,
+        token_id: String,
+        msg: Option<Binary>,
+        callback_code_hash: String,
+        contract_addr: HumanAddr,
+    },
+    BatchReceiveNft{
+        sender: HumanAddr,
+        from: HumanAddr,
+        token_ids: Vec<String>,
+        msg: Option<Binary>,
+        callback_code_hash: String,
+        contract_addr: HumanAddr,
     },
 }
 
@@ -187,6 +203,22 @@ pub struct List {
     pub memo: Option<String>,
 }
 
+/// token received info 
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct Receive {
+       /// optional token id, if omitted, use current token index
+       pub token_id: String,
+       /// optional owner address, owned by the minter otherwise
+       pub owner: HumanAddr,
+       /// optional public metadata that can be seen by everyone
+       pub public_metadata: Option<Metadata>,
+       /// optional private metadata that can only be seen by owner and whitelist
+       pub private_metadata: Option<Metadata>,
+       /// optionally true if the token is transferable.  Defaults to true if omitted
+       pub transferable: Option<bool>,
+       /// optional memo for the tx
+       pub memo: Option<String>,
+}
 /// send token info used when doing a BatchSendNft
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct Send {
@@ -250,6 +282,12 @@ pub enum HandleAnswer {
         status: ResponseStatus,
     },
     ListNft {
+        status: ResponseStatus,
+    },
+    ReceiveNft {
+        status: ResponseStatus,
+    },
+    BatchReceiveNft {
         status: ResponseStatus,
     },
 }
@@ -424,7 +462,7 @@ pub enum QueryAnswer {
         count: u32,
     },
     ListedPrice {
-        price : f64,
+        price : String,
     },
 }
 

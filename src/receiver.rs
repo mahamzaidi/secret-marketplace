@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use cosmwasm_storage::{PrefixedStorage};
 use cosmwasm_std::{Binary, CosmosMsg, HumanAddr, StdResult, Storage, StdError, Api, Querier, Extern, };
 use secret_toolkit::utils::HandleCallback;
-
-use crate::contract::BLOCK_SIZE;
+use crate::msg::{ContractStatus, List,};
+use crate::contract::{BLOCK_SIZE, list_nft, batch_receive_nft, receive_nft,};
 use crate::state::{save, Config, CONFIG_KEY, PREFIX_INFOS, PREFIX_TX_IDS, load};
 
 /// used to create ReceiveNft and BatchReceiveNft callback messages.  BatchReceiveNft is preferred
@@ -66,31 +66,14 @@ impl HandleCallback for Snip721ReceiveMsg {
 /// * `callback_code_hash` - String holding the code hash of the contract that was
 ///                          sent the token
 /// * `contract_addr` - address of the contract that was sent the token
-pub fn receive_nft_msg<S: Storage, A: Api, Q: Querier>(
-    deps: &mut Extern<S, A, Q>,
+pub fn receive_nft_msg(
     sender: HumanAddr,
     token_id: String,
     msg: Option<Binary>,
     callback_code_hash: String,
     contract_addr: HumanAddr,
 ) -> StdResult<CosmosMsg> {
-    let _sender = &sender;
-    let _tokenId = &token_id;
-   
-
-    let mut config: Config = load(&deps.storage, CONFIG_KEY)?;
-    config.token_cnt = config.token_cnt.checked_add(1).ok_or_else(|| {
-        StdError::generic_err("Attempting to receive more tokens than the implementation limit")
-    })?;
-    ///save latest token count into the configuration
-    save(&mut deps.storage, CONFIG_KEY, &config)?;
-    let mut token_store = PrefixedStorage::new(PREFIX_INFOS, &mut deps.storage);
-    /// save the receiver information which has implemented receive nft
-    save(&mut token_store, _sender.to_string().as_bytes(), &_tokenId)?;
-    // let mut add_ids = PrefixedStorage::new(PREFIX_TX_IDS, &mut deps.storage);
-    // save(&mut add_ids, &token_id)?;
-
-    let msg = Snip721ReceiveMsg::ReceiveNft {
+    let msg = Snip721ReceiveMsg::BatchReceiveNft {
         sender,
         token_id,
         msg,
@@ -110,8 +93,7 @@ pub fn receive_nft_msg<S: Storage, A: Api, Q: Querier>(
 /// * `callback_code_hash` - String holding the code hash of the contract that was
 ///                          sent the token
 /// * `contract_addr` - address of the contract that was sent the token
-pub fn batch_receive_nft_msg<S: Storage, A: Api, Q: Querier>(
-    deps: &mut Extern<S, A, Q>,
+pub fn batch_receive_nft_msg(
     sender: HumanAddr,
     from: HumanAddr,
     token_ids: Vec<String>,
@@ -119,25 +101,7 @@ pub fn batch_receive_nft_msg<S: Storage, A: Api, Q: Querier>(
     callback_code_hash: String,
     contract_addr: HumanAddr,
 ) -> StdResult<CosmosMsg> {
-    let _sender = &sender;
-    let _tokenIds = &token_ids;
-
-    let mut config: Config = load(&deps.storage, CONFIG_KEY)?;
-    // let received_tokens = token_ids.len();
-    // config.token_cnt = config.token_cnt.checked_add(received_tokens).ok_or_else(|| {
-    //     StdError::generic_err("Attempting to receive more tokens than the implementation limit")
-    // })?;
-
-    ///save latest token count into the configuration
-    save(&mut deps.storage, CONFIG_KEY, &config)?;
-    let mut token_store = PrefixedStorage::new(PREFIX_INFOS, &mut deps.storage);
-    /// save the receiver information which has implemented receive nft
-    save(&mut token_store, _sender.to_string().as_bytes(), &_tokenIds)?;
-    // let mut add_ids = PrefixedStorage::new(PREFIX_TX_IDS, &mut deps.storage);
-    // for id in &token_ids {
-    //     save(&mut add_ids, &id)?;
-    // }
-    let msg = Snip721ReceiveMsg::BatchReceiveNft {
+    let msg = Snip721ReceiveMsg::batch_receive_nft {
         sender,
         from,
         token_ids,
@@ -145,3 +109,6 @@ pub fn batch_receive_nft_msg<S: Storage, A: Api, Q: Querier>(
     };
     msg.to_cosmos_msg(callback_code_hash, contract_addr, None)
 }
+
+
+

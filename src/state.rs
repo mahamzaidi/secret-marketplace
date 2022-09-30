@@ -32,9 +32,9 @@ pub const PREFIX_INFOS: &[u8] = b"infos";
 pub const PREFIX_ALL_PERMISSIONS: &[u8] = b"allpermissions";
 /// prefix for the storage of the code hashes of contract's that have implemented ReceiveNft
 pub const PREFIX_RECEIVERS: &[u8] = b"receivers";
-pub const PREFIX_SELLERS: &[u8] =b"sellers";
-pub const PREFIX_BUYERS: &[u8] = b"buyers";
-pub const PREFIX_SOLD: &[u8] = b"sold";
+/// prefix for storage of token sales
+pub const PREFIX_SALES: &[u8] =b"sellers";
+/// storage key for prng seed
 pub const PRNG_SEED_KEY: &[u8] = b"prngseed";
 /// prefix for storage of txs
 pub const PREFIX_TXS: &[u8] = b"rawtxs";
@@ -50,12 +50,15 @@ pub const PREFIX_VIEW_KEY: &[u8] = b"viewkeys";
 pub const PREFIX_PUB_META: &[u8] = b"publicmeta";
 /// prefix for the storage of private metadata
 pub const PREFIX_PRIV_META: &[u8] = b"privatemeta";
-/// storage key for minters
+/// storage key for minters (in this contract minters will be equal to buyers)
 pub const MINTERS_KEY: &[u8] = b"minters";
 /// storage key for token prices
 pub const PREFIX_PRICE_KEY: &[u8] = b"prices";
 /// storage key for token auction
 pub const PREFIX_AUCTION_KEY: &[u8] = b"viewkeys";
+/// storage key for total number of tokens owned by contract
+pub const COUNT_KEY: &[u8] = b"count";
+/// prefix for storage of sale status of tokens
 
 /// Token contract config
 #[derive(Serialize, Debug, Deserialize, Clone, PartialEq)]

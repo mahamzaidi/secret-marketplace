@@ -4,7 +4,7 @@ use crate::rand::sha_256;
 use cosmwasm_std::{
     log, to_binary, Api, Binary, BlockInfo, CanonicalAddr, CosmosMsg, Env, Extern, HandleResponse,
     HandleResult, HumanAddr, InitResponse, InitResult, Querier, QueryResult, ReadonlyStorage,
-    StdError, StdResult, Storage, WasmMsg,
+    StdError, StdResult, Storage, WasmMsg, Uint128, Coin,
 };
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
 use primitive_types::U256;
@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 use secret_toolkit::{
     permit::{validate, Permit, RevokedPermits},
-    utils::{pad_handle_result, pad_query_result},
+    utils::{pad_handle_result, pad_query_result, space_pad,},
 };
 use crate::inventory::{Inventory, InventoryIter};
 use crate::msg::{
@@ -21,11 +21,11 @@ use crate::msg::{
     Cw721OwnerOfResponse, Cw721Approval, List,
 };
 use crate::state::{
-    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_SELLERS, PREFIX_TX_IDS, PRNG_SEED_KEY, PREFIX_VIEW_KEY, PREFIX_PUB_META, PREFIX_PRIV_META, MINTERS_KEY, PREFIX_PRICE_KEY, PREFIX_AUCTION_KEY,
+    json_may_load, json_save, load, may_load, remove, save, store_transfer, AuthList, Config,Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_RECEIVERS, PREFIX_TX_IDS, PRNG_SEED_KEY, PREFIX_VIEW_KEY, PREFIX_PUB_META, PREFIX_PRIV_META, MINTERS_KEY, PREFIX_PRICE_KEY, PREFIX_AUCTION_KEY, COUNT_KEY,
 };
 
 use crate::token::{Metadata, Token};
-use crate::receiver::{receive_nft_msg, batch_receive_nft_msg, Snip721ReceiveMsg::{ReceiveNft, BatchReceiveNft}};
+use crate::receiver::{Snip721ReceiveMsg, batch_receive_nft_msg, receive_nft_msg,};
 use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
 
 pub const MARKET_FEE: u128 = 300; //WRITE IN LOWEST DENOMINATION OF YOUR PREFERRED SNIP
@@ -72,7 +72,7 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
     let view_key = base64::encode(&prng_seed);
     let init_config = msg.config.unwrap_or_default();
     let ps = &prng_seed;
-
+    let count = 0;
     let mut config = Config {
         name: msg.name,
         admin: admin_raw.clone(),
@@ -93,7 +93,7 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
 
     };
 
-
+    save (&mut deps.storage, COUNT_KEY, &count);
     save(&mut deps.storage, CONFIG_KEY, &config)?;
     save(&mut deps.storage, PRNG_SEED_KEY, &prng_seed)?;
 
@@ -233,6 +233,7 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             make_owner_private(deps, env, &config, ContractStatus::StopTransactions.to_u8()
         ),
         HandleMsg::ListNft{
+            token_owner,
             token_lists,
             sale_price,
             msg,
@@ -242,14 +243,173 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             env, 
             &mut config, 
             ContractStatus::Normal.to_u8(),
+            token_owner,
             token_lists, 
             sale_price,
             msg,
             memo,
         ),
+        HandleMsg::ReceiveNft{
+            sender,
+            token_id,
+            msg,
+            callback_code_hash,
+            contract_addr,
+        } => receive_nft(
+            deps,
+            env,
+            &mut config,
+            sender,
+            token_id,
+            msg,
+            callback_code_hash,
+            contract_addr,
+        ),
+        HandleMsg::BatchReceiveNft{
+            sender,
+            from,
+            token_ids,
+            msg,
+            callback_code_hash,
+            contract_addr,
+        } => batch_receive_nft(
+            deps,
+            env,
+            &mut config,
+            sender,
+            from,
+            token_ids,
+            msg,
+            callback_code_hash,
+            contract_addr,
+        ),
+
         
     };
     pad_handle_result(response, BLOCK_SIZE)
+}
+
+/// Returns a StdResult<CosmosMsg> used to call a registered contract's ReceiveNft
+///
+/// # Arguments
+///
+/// * `sender` - the address of the former owner of the sent token
+/// * `token_id` - ID String of the token that was sent
+/// * `msg` - optional msg used to control ReceiveNft logic
+/// * `callback_code_hash` - String holding the code hash of the contract that was
+///                          sent the token
+/// * `contract_addr` - address of the contract that was sent the token
+pub fn receive_nft<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    sender: HumanAddr, //the address that owns the token
+    token_id: String,
+    msg: Option<Binary>,
+    callback_code_hash: String,
+    contract_addr: HumanAddr,
+) -> HandleResult {
+    
+    let _owner = &sender;
+    let _tokenId = &token_id;
+
+    let list_vec = List{
+        token_id: Some(_tokenId.to_owned()),
+        owner: Some(_owner.to_owned()),
+        public_metadata: None,
+        private_metadata: None,
+        transferable: Some(true),
+        memo: None,
+    };
+
+    let messages = list_nft(
+        deps,
+        env, 
+        config,
+        ContractStatus::Normal.to_u8(),
+        _owner.to_owned(),
+        vec![list_vec],
+        "1".to_string(),
+        msg,
+        None,
+    )?;
+
+    let res = HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::ReceiveNft { status: Success })?),
+    };
+    Ok(res)
+
+    // let msg = Snip721ReceiveMsg::ReceiveNft {
+    //     sender,
+    //     token_id,
+    //     msg,
+    // };
+    // msg.to_cosmos_msg(callback_code_hash, contract_addr, None)
+}
+
+/// Returns a StdResult<CosmosMsg> used to call a registered contract's
+/// BatchReceiveNft
+///
+/// # Arguments
+///
+/// * `sender` - the address that is sending the token
+/// * `from` - the address of the former owner of the sent token
+/// * `token_ids` - list of ID Strings of the tokens that were sent
+/// * `msg` - optional msg used to control ReceiveNft logic
+/// * `callback_code_hash` - String holding the code hash of the contract that was
+///                          sent the token
+/// * `contract_addr` - address of the contract that was sent the token
+pub fn batch_receive_nft<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    sender: HumanAddr,
+    from: HumanAddr, //previous owner
+    token_ids: Vec<String>,
+    msg: Option<Binary>,
+    callback_code_hash: String,
+    contract_addr: HumanAddr,
+) -> HandleResult {
+
+    let _owner = &from;
+    let _tokenIds = &token_ids[0];
+   
+    let list_vec = List{
+        token_id: Some(_tokenIds.to_owned()),
+        owner: Some(_owner.to_owned()),
+        public_metadata: None,
+        private_metadata: None,
+        transferable: Some(true),
+        memo: None,
+    };
+
+    let messages = list_nft(
+        deps,
+        env, 
+        config,
+        ContractStatus::Normal.to_u8(),
+        _owner.to_owned(),
+        vec![list_vec],
+        "1".to_string(),
+        msg,
+        None,
+    )?;
+
+    let res = HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::BatchReceiveNft { status: Success })?),
+    };
+    Ok(res)
+    // let msg = Snip721ReceiveMsg::BatchReceiveNft {
+    //     sender,
+    //     from,
+    //     token_ids,
+    //     msg,
+    // };
+    // msg.to_cosmos_msg(callback_code_hash, contract_addr, None)
 }
 
 pub fn list_nft<S: Storage, A: Api, Q: Querier>(
@@ -257,6 +417,7 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     env: Env,
     config: &mut Config,
     priority: u8,
+    token_owner: HumanAddr,
     lists : Vec<List>,
     sale_price: String,
     msg: Option<Binary>,
@@ -281,10 +442,6 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
     let recipient = env.contract.address.clone();
     
-    // if(available_for_auction){
-    //     let mut auction = PrefixedStorage::new(PREFIX_AUCTION_KEY, &mut deps.storage);
-    //     save(&mut auction, val, &token_id)?;     
-    // }
     for list in lists.into_iter() {
         //save price 
         let mut price = PrefixedStorage::new(PREFIX_PRICE_KEY, &mut deps.storage);
@@ -301,15 +458,16 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
         }
         // increment token count
         config.token_cnt = config.token_cnt.checked_add(1).ok_or_else(|| {
-            StdError::generic_err("Attempting to mint more tokens than the implementation limit")
+            StdError::generic_err("Attempting to list more tokens than the implementation limit")
         })?;
+
         // map new token id to its index
         save(&mut map2idx, id.as_bytes(), &config.token_cnt);
 
         let transferable = list.transferable.unwrap_or(true);    
 
         let token = Token {
-            owner:deps.api.canonical_address(&env.message.sender)?,
+            owner:deps.api.canonical_address(&token_owner)?,
             permissions: Vec::new(),
             unwrapped: !config.sealed_metadata_is_enabled,
             transferable,
@@ -351,6 +509,10 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
     listed.push(id);
 
     }
+    let mut n_total_count: u64  = load(&mut deps.storage, COUNT_KEY)?;       
+    let mut total_count = n_total_count+1;
+    save (&mut deps.storage, COUNT_KEY, &total_count);
+    
     // save all the updated inventories
     for inventory in inventories.iter() {
         inventory.save(&mut deps.storage)?;
@@ -944,6 +1106,7 @@ fn transfer_impl<S: Storage, A: Api, Q: Querier>(
 fn receiver_callback_msgs<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: &Env,
+    config: &mut Config,
     contract_human: &HumanAddr,
     contract: &CanonicalAddr,
     receiver_info: Option<ReceiverInfo>,
@@ -982,6 +1145,8 @@ fn receiver_callback_msgs<S: Storage, A: Api, Q: Querier>(
         if impl_batch {
             callbacks.push(batch_receive_nft_msg(
                 deps,
+                env.to_owned(),
+                config,
                 sender.clone(),
                 send_from.owner,
                 send_from.token_ids,
@@ -994,6 +1159,8 @@ fn receiver_callback_msgs<S: Storage, A: Api, Q: Querier>(
             for token_id in send_from.token_ids.into_iter() {
                 callbacks.push(receive_nft_msg(
                     deps,
+                    env.to_owned(),
+                    config,
                     send_from.owner.clone(),
                     token_id,
                     msg.clone(),
@@ -1065,7 +1232,7 @@ pub fn query_listed_price<S: ReadonlyStorage>(storage: &S, token_id: &str) -> Qu
     let binding = token_id.to_string();
     let key: &[u8] = binding.as_bytes();
     let price: Option<String> = may_load(&price_store, key)?;
-    let num: f64 = price.as_ref().map(String::as_str).unwrap().to_string().parse().unwrap();
+    let num: String = price.as_ref().map(String::as_str).unwrap().to_string();
     to_binary(&QueryAnswer::ListedPrice {
         price: num,
     })
@@ -1775,10 +1942,12 @@ fn send_list<S: Storage, A: Api, Q: Querier>(
                     send_from_list.push(new_sd_fm);
                 }
             }
+           
             // get BatchReceiveNft and ReceiveNft msgs for all the tokens sent in this Send
             messages.extend(receiver_callback_msgs(
                 deps,
                 &env,
+                &mut config,
                 &send.contract,
                 &contract_raw,
                 send.receiver_info,
@@ -2312,3 +2481,32 @@ fn gen_cw721_approvals<A: Api>(
     }
     Ok(())
 }
+
+// pub fn to_cosmos_msg(
+//     &self,
+//     mut block_size: usize,
+//     callback_code_hash: String,
+//     contract_addr: HumanAddr,
+//     send_amount: Option<Uint128>,
+// ) -> StdResult<CosmosMsg> {
+//     // can not have block size of 0
+//     if block_size == 0 {
+//         block_size = 1;
+//     }
+//     let mut msg = to_binary(self)?;
+//     space_pad(&mut msg.0, block_size);
+//     let mut send = Vec::new();
+//     if let Some(amount) = send_amount {
+//         send.push(Coin {
+//             amount,
+//             denom: String::from("uscrt"),
+//         });
+//     }
+//     let execute = WasmMsg::Execute {
+//         msg,
+//         contract_addr,
+//         callback_code_hash,
+//         send,
+//     };
+//     Ok(execute.into())
+// }
