@@ -43,8 +43,8 @@ pub enum ResponseStatus {
 
 ```
 
-###Note
+### Note
 1. If you create wallet addresses on the old version of secretcli, the addresses wont work for deployment and instantiation of contracts on the latest version of pulsar-2. You need to create new wallet addresses on the latest version of secretcli.
 2. Scrt faucet https://faucet.pulsar.scrttestnet.com/
 3. Pulsar-2 block explorer https://testnet.ping.pub/secret
-4. Available endpoinst https://github.com/scrtlabs/api-registry#api-endpoints-1
+4. Available endpoints https://github.com/scrtlabs/api-registry#api-endpoints-1
