@@ -19,19 +19,19 @@ General steps involving snip721 reference impl and the marketplace contract
 8) The marketplace contract has been coded as such that it will call list_nft function from the receiver functions. Thus all the nfts sent to this contract will be directly listed on the contract. 
 
 ## For the required HandleMsg and HandleAnswer:
-Go to msg.rs file. The required HandleMsgs for first 6 steps are :
+Go to **msg.rs** file. The required HandleMsgs for first 6 steps are :
 
-RegisterReceiveNft, 
-TransferNft,
-SendNft,
-CreateViewingKey
+-RegisterReceiveNft, 
+-TransferNft,
+-SendNft,
+-CreateViewingKey
 
 The required HandleAnswers for first 6 steps are:
 
-RegisterReceiveNft,
-TransferNft,
-SendNft,
-CreateViewingKey
+-RegisterReceiveNft,
+-TransferNft,
+-SendNft,
+-CreateViewingKey
 
 The HandleAnswers return an Enum variable which is defined in the msg.rs as this
 
@@ -43,3 +43,8 @@ pub enum ResponseStatus {
 
 ```
 
+###Note
+1. If you create wallet addresses on the old version of secretcli, the addresses wont work for deployment and instantiation of contracts on the latest version of pulsar-2. You need to create new wallet addresses on the latest version of secretcli.
+2. Scrt faucet https://faucet.pulsar.scrttestnet.com/
+3. Pulsar-2 block explorer https://testnet.ping.pub/secret
+4. Available endpoinst https://github.com/scrtlabs/api-registry#api-endpoints-1
