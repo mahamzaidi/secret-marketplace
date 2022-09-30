@@ -21,17 +21,17 @@ General steps involving snip721 reference impl and the marketplace contract
 ## For the required HandleMsg and HandleAnswer:
 Go to **msg.rs** file. The required HandleMsgs for first 6 steps are :
 
--RegisterReceiveNft, 
--TransferNft,
--SendNft,
--CreateViewingKey
+- RegisterReceiveNft
+- TransferNft
+- SendNft
+- CreateViewingKey
 
 The required HandleAnswers for first 6 steps are:
 
--RegisterReceiveNft,
--TransferNft,
--SendNft,
--CreateViewingKey
+- RegisterReceiveNft
+- TransferNft
+- SendNft
+- CreateViewingKey
 
 The HandleAnswers return an Enum variable which is defined in the msg.rs as this
 
