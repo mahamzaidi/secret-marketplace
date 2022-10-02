@@ -168,20 +168,11 @@ pub enum HandleMsg {
         msg: Option<Binary>,
         memo: Option<String>,      
     },
-    ReceiveNft{
-        sender: HumanAddr,
-        token_id: String,
-        msg: Option<Binary>,
-        callback_code_hash: String,
-        contract_addr: HumanAddr,
-    },
     BatchReceiveNft{
         sender: HumanAddr,
         from: HumanAddr,
         token_ids: Vec<String>,
         msg: Option<Binary>,
-        callback_code_hash: String,
-        contract_addr: HumanAddr,
     },
 }
 
@@ -237,6 +228,24 @@ pub struct Send {
 /// permission access level
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
+pub enum TokenStatus {
+    ForSale,
+    NotForSale,
+}
+
+impl TokenStatus {
+    /// Returns u8 representation of the TokenStatus
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            TokenStatus::NotForSale => 0,
+            TokenStatus::ForSale => 1,
+        }
+    }
+}
+
+/// permission access level
+#[derive(Serialize, Deserialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum AccessLevel {
     /// approve permission only for the specified token
     ApproveToken,
@@ -282,9 +291,6 @@ pub enum HandleAnswer {
         status: ResponseStatus,
     },
     ListNft {
-        status: ResponseStatus,
-    },
-    ReceiveNft {
         status: ResponseStatus,
     },
     BatchReceiveNft {

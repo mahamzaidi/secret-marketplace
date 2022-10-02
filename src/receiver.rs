@@ -2,12 +2,12 @@
 #![allow(warnings, unused)]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use cosmwasm_storage::{PrefixedStorage};
-use cosmwasm_std::{Binary, CosmosMsg, HumanAddr, StdResult, Storage, StdError, Api, Querier, Extern, };
+
+use cosmwasm_std::{Binary, CosmosMsg, HumanAddr, StdResult};
+
 use secret_toolkit::utils::HandleCallback;
-use crate::msg::{ContractStatus, List,};
-use crate::contract::{BLOCK_SIZE, list_nft, batch_receive_nft, receive_nft,};
-use crate::state::{save, Config, CONFIG_KEY, PREFIX_INFOS, PREFIX_TX_IDS, load};
+
+use crate::contract::BLOCK_SIZE;
 
 /// used to create ReceiveNft and BatchReceiveNft callback messages.  BatchReceiveNft is preferred
 /// over ReceiveNft, because ReceiveNft does not allow the recipient to know who sent the token,
@@ -73,7 +73,7 @@ pub fn receive_nft_msg(
     callback_code_hash: String,
     contract_addr: HumanAddr,
 ) -> StdResult<CosmosMsg> {
-    let msg = Snip721ReceiveMsg::BatchReceiveNft {
+    let msg = Snip721ReceiveMsg::ReceiveNft {
         sender,
         token_id,
         msg,
@@ -101,7 +101,7 @@ pub fn batch_receive_nft_msg(
     callback_code_hash: String,
     contract_addr: HumanAddr,
 ) -> StdResult<CosmosMsg> {
-    let msg = Snip721ReceiveMsg::batch_receive_nft {
+    let msg = Snip721ReceiveMsg::BatchReceiveNft {
         sender,
         from,
         token_ids,

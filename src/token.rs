@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use cosmwasm_std::CanonicalAddr;
-
+use crate::msg::TokenStatus;
 use crate::state::Permission;
 
 #[derive(Serialize, Deserialize)]
@@ -14,6 +14,7 @@ pub struct Token {
     /// tokens are considered unwrapped
     pub unwrapped: bool,
     pub transferable: bool,
+    pub sale_status: TokenStatus,
 }
 
 /// token metadata
