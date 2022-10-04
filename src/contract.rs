@@ -2,9 +2,7 @@
 #![allow(warnings, unused)]
 use crate::rand::sha_256;
 use cosmwasm_std::{
-    log, to_binary, Api, Binary, BlockInfo, CanonicalAddr, CosmosMsg, Env, Extern, HandleResponse,
-    HandleResult, HumanAddr, InitResponse, InitResult, Querier, QueryResult, ReadonlyStorage,
-    StdError, StdResult, Storage, WasmMsg, Uint128, Coin,
+    log, to_binary, Api, Binary, BlockInfo, CanonicalAddr, CosmosMsg, Env, Extern, HandleResponse, HandleResult, HumanAddr, InitResponse, InitResult, Querier, QueryResult, ReadonlyStorage, StdError, StdResult, Storage, WasmMsg, Uint128, Coin,
 };
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
 use primitive_types::U256;
@@ -261,8 +259,21 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             &token_ids,
             msg,
         ),
-
-        
+        // HandleMsg::TokenSale{
+        //     deps,
+        //     env,
+        //     &config,
+        //     owner,
+        //     token_id,
+        //     buyer,
+        // } => token_sale(
+        //     deps,
+        //     env,
+        //     &mut config,
+        //     owner,
+        //     token_id,
+        //     buyer,
+        // ),      
     };
     pad_handle_result(response, BLOCK_SIZE)
 }
@@ -289,7 +300,7 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
 //         deps,
 //         env, 
 //         ContractStatus::Normal.to_u8(),
-//         _owner.to_owned(),
+//         owner.to_owned(),
 //         vec![list_vec],
 //         "1".to_string(),
 //         msg,
@@ -329,6 +340,7 @@ pub fn batch_receive_nft<S: Storage, A: Api, Q: Querier>(
 ) -> HandleResult {
     let mut config: Config = load(&deps.storage, CONFIG_KEY)?;
     if !config.status == ContractStatus::Normal.to_u8(){
+        
         return Err(StdError::generic_err("This marketplace is currently not open to transfers!"));
     }
     
@@ -397,6 +409,7 @@ pub fn list_nft<S: Storage, A: Api, Q: Querier>(
         //save price 
         let mut price = PrefixedStorage::new(PREFIX_PRICE_KEY, &mut deps.storage);
         save(&mut price, list.token_id.as_ref().unwrap().as_bytes(), &sale_price)?;
+        
         let id = list.token_id.unwrap_or(format!("{}", config.token_cnt));
         // check if id already exists
         let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);

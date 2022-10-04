@@ -107,6 +107,8 @@ pub fn batch_receive_nft_msg(
         token_ids,
         msg,
     };
+
+
     msg.to_cosmos_msg(callback_code_hash, contract_addr, None)
 }
 

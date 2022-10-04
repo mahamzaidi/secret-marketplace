@@ -174,6 +174,11 @@ pub enum HandleMsg {
         token_ids: Vec<String>,
         msg: Option<Binary>,
     },
+    // TokenSale{
+    //     owner: HumanAddr,
+    //     token_id: String,
+    //     buyer: HumanAddr,
+    // },
 }
 
 
@@ -296,6 +301,9 @@ pub enum HandleAnswer {
     BatchReceiveNft {
         status: ResponseStatus,
     },
+    // TokenSale {
+    //     status: ResponseStatus,
+    // },
 }
 
 /// response of CW721 OwnerOf

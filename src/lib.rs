@@ -8,6 +8,8 @@ pub mod inventory;
 pub mod viewing_key;
 pub mod utils;
 pub mod receiver;
+pub mod unittest_handles;
+pub mod unittest_queries;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
