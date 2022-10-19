@@ -1,15 +1,22 @@
+//#![allow(clippy::field_reassign_with_default)]
 pub mod contract;
+pub mod expiration;
+mod inventory;
+pub mod mint_run;
 pub mod msg;
+mod rand;
+pub mod receiver;
+pub mod royalties;
 pub mod state;
 pub mod token;
-pub mod expiration;
-pub mod rand;
-pub mod inventory;
-pub mod viewing_key;
-pub mod utils;
-pub mod receiver;
-pub mod unittest_handles;
-pub mod unittest_queries;
+mod unittest_handles;
+mod unittest_inventory;
+mod unittest_mint_run;
+mod unittest_non_transferable;
+mod unittest_queries;
+mod unittest_royalties;
+mod utils;
+mod viewing_key;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
@@ -45,5 +52,5 @@ mod wasm {
     }
 
     // Other C externs like cosmwasm_vm_version_1, allocate, deallocate are available
-    // automatically because we use cosmwasm_std.
+    // automatically because we `use cosmwasm_std`.
 }

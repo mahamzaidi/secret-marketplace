@@ -1,5 +1,3 @@
-#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
-#![allow(warnings, unused)]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -107,10 +105,5 @@ pub fn batch_receive_nft_msg(
         token_ids,
         msg,
     };
-
-
     msg.to_cosmos_msg(callback_code_hash, contract_addr, None)
 }
-
-
-

@@ -2,19 +2,21 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use cosmwasm_std::CanonicalAddr;
-use crate::msg::TokenStatus;
+
 use crate::state::Permission;
 
+/// token
 #[derive(Serialize, Deserialize)]
 pub struct Token {
+    /// owner
     pub owner: CanonicalAddr,
     /// permissions granted for this token
     pub permissions: Vec<Permission>,
     /// true if this token has been unwrapped.  If sealed metadata is not enabled, all
     /// tokens are considered unwrapped
     pub unwrapped: bool,
+    /// true if this token is transferable
     pub transferable: bool,
-    pub sale_status: TokenStatus,
 }
 
 /// token metadata
@@ -26,7 +28,6 @@ pub struct Metadata {
     /// optional on-chain metadata.  Only use this if you are not using `token_uri`
     pub extension: Option<Extension>,
 }
-
 
 /// metadata extension
 /// You can add any metadata fields you need here.  These fields are based on
@@ -60,6 +61,9 @@ pub struct Extension {
     /// a select list of trait_types that are in the private metadata.  This will only ever be used
     /// in public metadata
     pub protected_attributes: Option<Vec<String>>,
+    /// token subtypes used by Stashh for display groupings (primarily used for badges, which are specified
+    /// by using "badge" as the token_subtype)
+    pub token_subtype: Option<String>,
 }
 
 /// attribute trait
