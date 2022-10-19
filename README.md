@@ -10,7 +10,7 @@ General steps involving snip721 reference impl and the marketplace contract
 
 4) Save the code id, contract address, deployer's address and the viewing key.
 
-5) In order to receive snip-721 tokens, the marketplace contract will register itself with the snip721 contract first by calling snip-721's register_receive_nft function.
+5) In order to receive snip-721 tokens, the marketplace contract will register itself with the snip721 contract first by calling snip-721's register_receive_nft function. Similarly, the snip-721 contract will also register itself with the marketplace contract by calling the register_receive_nft function of the marketplace contract.
 
 6) Once registered, a user can use either the transfer_nft function or the send_nft function to transfer his 721 nft from his address to the marketplace contract or any other address. The only difference between transfer_nft and send_nft is that with send_nft you can also send an optional msg.
 
