@@ -466,59 +466,63 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             sale_status,
             price,
         ),
+        HandleMsg::SetPrice { token_id, price } => set_price (
+            deps,
+            env,
+            &mut config,
+            &token_id,
+            price,
+        )
+
+        }
     };
     pad_handle_result(response, BLOCK_SIZE)
 }
 
-// pub fn query_token_sale_info<S: Storage, A: Api, Q: Querier>(
-//     deps: &Extern<S, A, Q>,
+
+// pub fn buy_token<S: Storage, A: Api, Q: Querier>(
+//     deps: &mut Extern<S, A, Q>,
+//     env: Env,
+//     config: &mut Config,
 //     token_id: &str,
-//     viewer: Option<ViewerInfo>,
-//     from_permit: Option<CanonicalAddr>,
-// ) -> QueryResult {
-//     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+// ) -> HandleResponse {
+//     let buyer = deps.api.canonical_address(&env.message.sender)?;
+//     // check if token_id exists
+//     let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
+//     let may_exist: Option<u32> = may_load(&map2idx, token_id.as_bytes())?;
 
-// }
+//     let err_msg = format!(
+//         "You are not authorized to perform this action on token {}",
+//         token_id
+//     );
+//     // if token supply is private, don't leak that the token id does not exist
+//     // instead just say they are not authorized for that token
+//     let opt_err = if config.token_supply_is_public {
+//         None
+//     } else {
+//         Some(&*err_msg)
+//     };
+//     // if token exists make your checks
+//     if may_exist.is_some() {
+//         let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
+//         // check if token is transferable
+//         if !token.transferable {
+//             return Err(StdError::generic_err(
+//                 "Non-transferable tokens can not be sold, so setting sale status is meaningless",
+//             ));
+//         }
+//         // check if token is up for sale
+//         let (stoken, sidx) = get_sale_status(&deps.storage, token_id, opt_err)?;
+//         if(stoken.sale_status == SaleStatus::ForSale){
+//             let _price = stoken.price;
 
-pub fn sell_token<S: Storage, A: Api, Q: Querier>(
-    deps: &mut Extern<S, A, Q>,
-    env: Env,
-    config: &mut Config,
-    token_id: &str,
-    price: u32,
-) -> HandleResponse {
-    let buyer = deps.api.canonical_address(&env.message.sender)?;
-    // check if token_id exists
-    let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
-    let may_exist: Option<u32> = may_load(&map2idx, token_id.as_bytes())?;
-
-    let err_msg = format!(
-        "You are not authorized to perform this action on token {}",
-        token_id
-    );
-    // if token supply is private, don't leak that the token id does not exist
-    // instead just say they are not authorized for that token
-    let opt_err = if config.token_supply_is_public {
-        None
-    } else {
-        Some(&*err_msg)
-    };
-    // if token exists make your checks
-    if may_exist.is_some() {
-        let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
-        // check if token is transferable
-        if !token.transferable {
-            return Err(StdError::generic_err(
-                "Non-transferable tokens can not be sold, so setting sale status is meaningless",
-            ));
-        }
-        // check if token is up for sale
+//         }
         
 
-    }
+//     }
 
 
-}
+// }
 
 pub fn query_tokens_for_sale<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) 
 -> QueryResult {
@@ -566,7 +570,8 @@ pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
                 "Only the owner of the token can change the sale status",
             ));
         }
-        
+        // if the sale status is for sale then TokenSaleInfo struct is populated with all the given arguments.
+        // if the sale status is not for sale then TokenSaleInfo struct only gets populated with token_id and sale_status whereas regardless of price sent, price is set to None.
         if (sale_status == SaleStatus::ForSale){
             token_price = Some(price);
 
@@ -593,13 +598,96 @@ pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
     
     Ok(HandleResponse {
         messages: vec![],
-        log: vec![],
+        log: vec![log("Sale status set", &token_id)],
         data: Some(to_binary(&HandleAnswer::SetSaleStatus {
-            status: Success,
+            token_id,
+            sale_status,
         })?),
     })
 }
 
+pub fn get_sale_status<S: ReadonlyStorage>(
+    storage: &S,
+    token_id: &str,
+    custom_err: Option<&str>,
+) -> StdResult<(TokenSaleInfo,u32)>{
+    let default_err: String;
+    let not_found = if let Some(err) = custom_err {
+        err
+    } else {
+        default_err = format!("Token ID: {} not found", token_id);
+        &*default_err
+    };
+    let map2idx = ReadonlyPrefixedStorage::new(PREFIX_MAP_TO_INDEX, storage);
+    let idx: u32 =
+        may_load(&map2idx, token_id.as_bytes())?.ok_or_else(|| StdError::generic_err(not_found))?;
+    let info_store = ReadonlyPrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, storage);
+    let token: TokenSaleInfo = json_may_load(&info_store, &idx.to_le_bytes())?.ok_or_else(|| {
+        StdError::generic_err(format!("Unable to find token sale info for {}", token_id))
+    })?;
+    Ok((token, idx))
+}
+
+pub fn set_price<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    token_id: &str,
+    price: u32,
+) -> HandleResult {
+    if( price == 0){
+        return Err(StdError::generic_err(
+            "Invalid input! Price cannot be set to 0.",
+        ));
+    }
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    // check if token_id exists
+    let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
+    let may_exist: Option<u32> = may_load(&map2idx, token_id.as_bytes())?;
+
+    let err_msg = format!(
+        "You are not authorized to perform this action on token {}",
+        token_id
+    );
+    // if token supply is private, don't leak that the token id does not exist
+    // instead just say they are not authorized for that token
+    let opt_err = if config.token_supply_is_public {
+        None
+    } else {
+        Some(&*err_msg)
+    };
+
+    // if token exists make your checks
+    if may_exist.is_some() {
+        let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
+        if !(token.owner == sender_raw){
+            return Err(StdError::generic_err(
+                "Only the owner of token can change token price",
+            ));
+        }
+        let (_token, _idx) = get_sale_status(&deps.storage, token_id, opt_err)?;
+        if !(_token.sale_status == SaleStatus::ForSale){
+            return Err(StdError::generic_err(
+                "Token is not up for sale so setting price is meaningless.",
+            ));
+        } else {
+            let mut sale_store = PrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, &mut deps.storage);
+            let stored_token: TokenSaleInfo = load(&sale_store, idx)?;
+            stored_token.token_price = price;
+            save(&mut sale_store, idx, &stored_token)?;
+        }
+    }
+
+    Ok(HandleResponse {
+        messages: vec![],
+        log: vec![log("price updated", &token_id)],
+        data: Some(to_binary(&HandleAnswer::SetPrice {
+            token_id,
+            price,
+        })?),
+    })
+}
+    
 pub fn register_contract_with_snip721(
     env: Env,
     msg: CallRegister,

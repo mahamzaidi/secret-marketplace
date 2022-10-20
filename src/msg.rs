@@ -116,10 +116,15 @@ pub struct CallRegister {
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleMsg {
-    // set token sale status
+    /// set token sale status
     SetSaleStatus {
         token_id: String,
         sale_status: SaleStatus,
+        price: u32,
+    },
+    /// set price of a token
+    SetPrice {
+        token_id: String,
         price: u32,
     },
     /// mint new token
@@ -609,7 +614,12 @@ pub enum HandleAnswer {
         status: ResponseStatus,
     },
     SetSaleStatus {
-        status: ResponseStatus,
+        token_id: String,
+        sale_status: SaleStatus,
+    },
+    SetPrice {
+        token_id: String,
+        price: u32,
     },
 
 }
