@@ -721,7 +721,6 @@ pub enum QueryMsg {
     TokensForSale {},
     SaleInfo {
         token_id: String,
-        viewer: Option<ViewerInfo>,
     },
     NumTokens {
         /// optional address and key requesting to view the number of tokens

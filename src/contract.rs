@@ -486,6 +486,7 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
 //     config: &mut Config,
 //     token_id: &str,
 // ) -> HandleResponse {
+
 //     let buyer = deps.api.canonical_address(&env.message.sender)?;
 //     // check if token_id exists
 //     let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
@@ -511,36 +512,20 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
 //                 "Non-transferable tokens can not be sold, so setting sale status is meaningless",
 //             ));
 //         }
+//         if (token.owner == buyer) {
+//             return Err(StdError::generic_err(
+//                 "Token owner cannot be the buyer of token",
+//             ));
+//         }
 //         // check if token is up for sale
 //         let (stoken, sidx) = get_sale_info(&deps.storage, token_id, opt_err)?;
 //         if(stoken.sale_status == SaleStatus::ForSale){
 //             let _price = stoken.price;
-
-//         }
-        
-
+//         }       
 //     }
-
-
 // }
 
-pub fn query_tokens_for_sale<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) 
--> QueryResult {
-    let for_sale: Vec<String> = may_load(&deps.storage, FOR_SALE_KEY)?.unwrap_or_default();
 
-    to_binary(&QueryAnswer::TokensForSale { for_sale })
-}
-
-pub fn query_sale_info<S: Storage, A: Api, Q: Querier>(
-    deps: &Extern<S, A, Q>,
-    token_id: &str,
-    viewer: Option<ViewerInfo>,
-) -> QueryResult {
-
-    let (sale_store, idx) = get_sale_info(&deps.storage, token_id, None)?;
-    
-    to_binary(&QueryAnswer::SaleInfo { sale_store })
-}
 
 pub fn get_sale_info<S: ReadonlyStorage>(
     storage: &S,
@@ -2114,10 +2099,9 @@ pub fn query<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>, msg: QueryM
         QueryMsg::ContractConfig {} => query_config(&deps.storage),
         QueryMsg::Minters {} => query_minters(deps),
         QueryMsg::TokensForSale {} => query_tokens_for_sale(deps),
-        QueryMsg::SaleInfo{ token_id, viewer } => query_sale_info(
+        QueryMsg::SaleInfo{ token_id} => query_sale_info(
             deps, 
             &token_id,
-            viewer, 
         ),
         QueryMsg::NumTokens { viewer } => query_num_tokens(deps, viewer, None),
         QueryMsg::AllTokens {
@@ -3493,6 +3477,20 @@ fn query_token_prep<S: Storage, A: Api, Q: Querier>(
     })
 }
 
+pub fn query_tokens_for_sale<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) 
+-> QueryResult {
+    let for_sale: Vec<String> = may_load(&deps.storage, FOR_SALE_KEY)?.unwrap_or_default();
+    to_binary(&QueryAnswer::TokensForSale { for_sale })
+}
+
+pub fn query_sale_info<S: Storage, A: Api, Q: Querier>(
+    deps: &Extern<S, A, Q>,
+    token_id: &str,
+) -> QueryResult {
+
+    let (sale_store, idx) = get_sale_info(&deps.storage, token_id, None)?;   
+    to_binary(&QueryAnswer::SaleInfo { sale_store })
+}
 /// Returns StdResult<(Option<HumanAddr>, Vec<Cw721Approval>, u32)> which is the owner, list of transfer
 /// approvals, and token index of the request token
 ///
