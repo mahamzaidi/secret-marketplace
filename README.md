@@ -10,7 +10,7 @@ The new functions implemented are:
 - **BatchReceiveNft**: Is called by a snip721 contract whenever it sends nfts to our contract.
 - **RegisterContractWithSnip721**: Registers our contract with another snip721 contract.
 
-##Procedure:
+## Procedure:
 
 1) After instantiating the contract, mint a token by calling the mint_nft function. E.g.
 ```
@@ -33,7 +33,7 @@ secretcli query compute query $CONTRACT '{"sale_info": {"token_id":"1"}}'
 secretcli query compute query $CONTRACT '{"tokens_for_sale":{}}'
 ```
 
-##Example transactions
+## Example transactions
 
 These are the transaction hashes generated from the above procedure for contract **secret16cdss9k4t8nx78gxuyedm29vfk3g9dp2wsjhp9** and code_id=14734 for the execution messages.
 
