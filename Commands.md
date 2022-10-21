@@ -22,9 +22,7 @@
 
 9) secretcli query compute list-contract-by-code CODE_ID
 
-## Calling functions
 
-10) 
 
 
 
