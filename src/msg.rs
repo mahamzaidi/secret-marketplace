@@ -120,7 +120,7 @@ pub enum HandleMsg {
     SetSaleStatus {
         token_id: String,
         sale_status: SaleStatus,
-        price: u32,
+        price: Option<u32>,
     },
     /// set price of a token
     SetPrice {
@@ -619,7 +619,7 @@ pub enum HandleAnswer {
     },
     SetPrice {
         token_id: String,
-        price: u32,
+        token_price: u32,
     },
 
 }
@@ -633,6 +633,7 @@ pub struct ViewerInfo {
     pub viewing_key: String,
 }
 
+
 /// a token's current sale information
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct TokenSaleInfo {
@@ -641,7 +642,7 @@ pub struct TokenSaleInfo {
     pub token_price: Option<u32>,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum SaleStatus {
     ForSale,
@@ -718,6 +719,10 @@ pub enum QueryMsg {
     /// display the number of tokens controlled by the contract.  The token supply must
     /// either be public, or the querier must be an authenticated minter
     TokensForSale {},
+    SaleInfo {
+        token_id: String,
+        viewer: Option<ViewerInfo>,
+    },
     NumTokens {
         /// optional address and key requesting to view the number of tokens
         viewer: Option<ViewerInfo>,
@@ -972,6 +977,9 @@ pub enum QueryAnswer {
     TokensForSale {
         for_sale: Vec<String>,
     },
+    SaleInfo {
+        sale_store: TokenSaleInfo,
+    },
     NumTokens {
         count: u32,
     },
@@ -1061,6 +1069,7 @@ pub enum QueryAnswer {
     ContractCreator {
         creator: Option<HumanAddr>,
     },
+
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema, Debug)]

@@ -24,7 +24,7 @@ use crate::rand::sha_256;
 use crate::receiver::{batch_receive_nft_msg, receive_nft_msg};
 use crate::royalties::{RoyaltyInfo, StoredRoyaltyInfo};
 use crate::state::{
-    get_txs, json_may_load, json_save, load, may_load, remove, save, store_burn, store_mint, store_transfer, AuthList, Config, Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, DEFAULT_ROYALTY_KEY, MINTERS_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_MINT_RUN, PREFIX_MINT_RUN_NUM, PREFIX_OWNER_PRIV, PREFIX_PRIV_META, PREFIX_PUB_META, PREFIX_RECEIVERS, PREFIX_REVOKED_PERMITS, PREFIX_ROYALTY_INFO, PREFIX_VIEW_KEY, PRNG_SEED_KEY, RECEIVED_NFT_KEY, FOR_SALE_KEY, PREFIX_TOKEN_SALE_INFO,
+    get_txs, json_may_load, json_save, load, may_load, json_load, remove, save, store_burn, store_mint, store_transfer, AuthList, Config, Permission, PermissionType, ReceiveRegistration, BLOCK_KEY, CONFIG_KEY, CREATOR_KEY, DEFAULT_ROYALTY_KEY, MINTERS_KEY, MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_MINT_RUN, PREFIX_MINT_RUN_NUM, PREFIX_OWNER_PRIV, PREFIX_PRIV_META, PREFIX_PUB_META, PREFIX_RECEIVERS, PREFIX_REVOKED_PERMITS, PREFIX_ROYALTY_INFO, PREFIX_VIEW_KEY, PRNG_SEED_KEY, RECEIVED_NFT_KEY, FOR_SALE_KEY, PREFIX_TOKEN_SALE_INFO,
 };
 use crate::token::{Metadata, Token};
 use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
@@ -472,9 +472,9 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             &mut config,
             &token_id,
             price,
-        )
+        ),
 
-        }
+        
     };
     pad_handle_result(response, BLOCK_SIZE)
 }
@@ -512,7 +512,7 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
 //             ));
 //         }
 //         // check if token is up for sale
-//         let (stoken, sidx) = get_sale_status(&deps.storage, token_id, opt_err)?;
+//         let (stoken, sidx) = get_sale_info(&deps.storage, token_id, opt_err)?;
 //         if(stoken.sale_status == SaleStatus::ForSale){
 //             let _price = stoken.price;
 
@@ -531,13 +531,46 @@ pub fn query_tokens_for_sale<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A,
     to_binary(&QueryAnswer::TokensForSale { for_sale })
 }
 
+pub fn query_sale_info<S: Storage, A: Api, Q: Querier>(
+    deps: &Extern<S, A, Q>,
+    token_id: &str,
+    viewer: Option<ViewerInfo>,
+) -> QueryResult {
+
+    let (sale_store, idx) = get_sale_info(&deps.storage, token_id, None)?;
+    
+    to_binary(&QueryAnswer::SaleInfo { sale_store })
+}
+
+pub fn get_sale_info<S: ReadonlyStorage>(
+    storage: &S,
+    token_id: &str,
+    custom_err: Option<&str>,
+) -> StdResult<(TokenSaleInfo,u32)>{
+    let default_err: String;
+    let not_found = if let Some(err) = custom_err {
+        err
+    } else {
+        default_err = format!("Token ID: {} not found", token_id);
+        &*default_err
+    };
+    let map2idx = ReadonlyPrefixedStorage::new(PREFIX_MAP_TO_INDEX, storage);
+    let idx: u32 =
+        may_load(&map2idx, token_id.as_bytes())?.ok_or_else(|| StdError::generic_err(not_found))?;
+    let info_store = ReadonlyPrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, storage);
+    let token: TokenSaleInfo = json_may_load(&info_store, &idx.to_le_bytes())?.ok_or_else(|| {
+        StdError::generic_err(format!("Unable to find token sale info for {}", token_id))
+    })?;
+    Ok((token, idx))
+}
+
 pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
     config: &mut Config,
     token_id: &str,
     sale_status: SaleStatus,
-    price: u32,
+    price: Option<u32>,
 ) -> HandleResult {
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
     let token_price: Option<u32>;
@@ -573,16 +606,19 @@ pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
         // if the sale status is for sale then TokenSaleInfo struct is populated with all the given arguments.
         // if the sale status is not for sale then TokenSaleInfo struct only gets populated with token_id and sale_status whereas regardless of price sent, price is set to None.
         if (sale_status == SaleStatus::ForSale){
-            token_price = Some(price);
-
+            
             let mut for_sale: Vec<String> =
             may_load(&deps.storage, FOR_SALE_KEY)?.unwrap_or_default();
             for_sale.push(token_id.to_string());
 
             save(&mut deps.storage, FOR_SALE_KEY, &for_sale)?;
-
+            if price.is_some(){
+                token_price = Some(price.unwrap());
+            } else {
+                token_price = Some(price.unwrap_or_default());
+            }
         } else {
-            token_price = None;
+            token_price = Some(0);
         }
 
         let sale = TokenSaleInfo{
@@ -600,33 +636,12 @@ pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
         messages: vec![],
         log: vec![log("Sale status set", &token_id)],
         data: Some(to_binary(&HandleAnswer::SetSaleStatus {
-            token_id,
-            sale_status,
+            token_id: token_id.to_string(),
+            sale_status: sale_status.clone(),
         })?),
     })
 }
 
-pub fn get_sale_status<S: ReadonlyStorage>(
-    storage: &S,
-    token_id: &str,
-    custom_err: Option<&str>,
-) -> StdResult<(TokenSaleInfo,u32)>{
-    let default_err: String;
-    let not_found = if let Some(err) = custom_err {
-        err
-    } else {
-        default_err = format!("Token ID: {} not found", token_id);
-        &*default_err
-    };
-    let map2idx = ReadonlyPrefixedStorage::new(PREFIX_MAP_TO_INDEX, storage);
-    let idx: u32 =
-        may_load(&map2idx, token_id.as_bytes())?.ok_or_else(|| StdError::generic_err(not_found))?;
-    let info_store = ReadonlyPrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, storage);
-    let token: TokenSaleInfo = json_may_load(&info_store, &idx.to_le_bytes())?.ok_or_else(|| {
-        StdError::generic_err(format!("Unable to find token sale info for {}", token_id))
-    })?;
-    Ok((token, idx))
-}
 
 pub fn set_price<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
@@ -665,16 +680,17 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
                 "Only the owner of token can change token price",
             ));
         }
-        let (_token, _idx) = get_sale_status(&deps.storage, token_id, opt_err)?;
+        let (_token, _idx) = get_sale_info(&deps.storage, token_id, opt_err)?;
+        let token_key = _idx.to_le_bytes();
         if !(_token.sale_status == SaleStatus::ForSale){
             return Err(StdError::generic_err(
                 "Token is not up for sale so setting price is meaningless.",
             ));
         } else {
             let mut sale_store = PrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, &mut deps.storage);
-            let stored_token: TokenSaleInfo = load(&sale_store, idx)?;
-            stored_token.token_price = price;
-            save(&mut sale_store, idx, &stored_token)?;
+            let mut stored_token: TokenSaleInfo = json_load(&sale_store, &token_key)?;
+            stored_token.token_price = Some(price);
+            json_save(&mut sale_store, &token_key, &stored_token)?;
         }
     }
 
@@ -682,8 +698,8 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
         messages: vec![],
         log: vec![log("price updated", &token_id)],
         data: Some(to_binary(&HandleAnswer::SetPrice {
-            token_id,
-            price,
+            token_id: token_id.to_string(),
+            token_price: price,
         })?),
     })
 }
@@ -2098,6 +2114,11 @@ pub fn query<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>, msg: QueryM
         QueryMsg::ContractConfig {} => query_config(&deps.storage),
         QueryMsg::Minters {} => query_minters(deps),
         QueryMsg::TokensForSale {} => query_tokens_for_sale(deps),
+        QueryMsg::SaleInfo{ token_id, viewer } => query_sale_info(
+            deps, 
+            &token_id,
+            viewer, 
+        ),
         QueryMsg::NumTokens { viewer } => query_num_tokens(deps, viewer, None),
         QueryMsg::AllTokens {
             viewer,
