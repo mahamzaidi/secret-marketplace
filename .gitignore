@@ -1,5 +1,6 @@
 # Build results
 /target
+/node_modules
 contract.wasm
 contract.wasm.gz
 
@@ -22,3 +23,4 @@ contract.wasm.gz
 
 # Ignore all text files
 *.txt
+*.env

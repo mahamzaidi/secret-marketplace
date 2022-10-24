@@ -2,6 +2,7 @@
 #![allow(warnings, unused)]
 use cosmwasm_std::{
     log, to_binary, Api, Binary, BlockInfo, CanonicalAddr, CosmosMsg, Env, Extern, HandleResponse, HandleResult, HumanAddr, InitResponse, InitResult, Querier, QueryResult, ReadonlyStorage, StdError, StdResult, Storage, WasmMsg, Uint128, Coin,
+    BankMsg,
 };
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
 use primitive_types::U256;
@@ -473,6 +474,12 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             &token_id,
             price,
         ),
+        HandleMsg::BuyToken { token_id } => buy_token (
+            deps,
+            env,
+            &mut config,
+            &token_id,
+        ),
 
         
     };
@@ -480,50 +487,99 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
 }
 
 
-// pub fn buy_token<S: Storage, A: Api, Q: Querier>(
-//     deps: &mut Extern<S, A, Q>,
-//     env: Env,
-//     config: &mut Config,
-//     token_id: &str,
-// ) -> HandleResponse {
+pub fn buy_token<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    token_id: &str,
+) -> HandleResult {
 
-//     let buyer = deps.api.canonical_address(&env.message.sender)?;
-//     // check if token_id exists
-//     let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
-//     let may_exist: Option<u32> = may_load(&map2idx, token_id.as_bytes())?;
+    let buyer = (&env.message.sender).clone();
+    let buyer_raw = deps.api.canonical_address(&env.message.sender)?;
+    let mut seller_raw: CanonicalAddr = CanonicalAddr::default();
+    let mut price_info: Coin = Coin::default();
+    let mut _price: u32 = 0;
 
-//     let err_msg = format!(
-//         "You are not authorized to perform this action on token {}",
-//         token_id
-//     );
-//     // if token supply is private, don't leak that the token id does not exist
-//     // instead just say they are not authorized for that token
-//     let opt_err = if config.token_supply_is_public {
-//         None
-//     } else {
-//         Some(&*err_msg)
-//     };
-//     // if token exists make your checks
-//     if may_exist.is_some() {
-//         let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
-//         // check if token is transferable
-//         if !token.transferable {
-//             return Err(StdError::generic_err(
-//                 "Non-transferable tokens can not be sold, so setting sale status is meaningless",
-//             ));
-//         }
-//         if (token.owner == buyer) {
-//             return Err(StdError::generic_err(
-//                 "Token owner cannot be the buyer of token",
-//             ));
-//         }
-//         // check if token is up for sale
-//         let (stoken, sidx) = get_sale_info(&deps.storage, token_id, opt_err)?;
-//         if(stoken.sale_status == SaleStatus::ForSale){
-//             let _price = stoken.price;
-//         }       
-//     }
-// }
+    // check if token_id exists
+    let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
+    let may_exist: Option<u32> = may_load(&map2idx, token_id.as_bytes())?;
+
+    let err_msg = format!(
+        "You are not authorized to perform this action on token {}",
+        token_id
+    );
+    // if token supply is private, don't leak that the token id does not exist
+    // instead just say they are not authorized for that token
+    let opt_err = if config.token_supply_is_public {
+        None
+    } else {
+        Some(&*err_msg)
+    };
+    // if token exists make your checks
+    if may_exist.is_some() {
+        let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
+        // check if token is transferable
+        if !token.transferable {
+            return Err(StdError::generic_err(
+                "Non-transferable tokens can not be sold, so setting sale status is meaningless",
+            ));
+        }
+        // check if token owner is trying to buy the token
+        if (token.owner == buyer_raw) {
+            seller_raw = token.owner;
+            return Err(StdError::generic_err(
+                "Token owner cannot be the buyer of token",
+            ));
+        }
+        // check if token is up for sale
+        let (stoken, sidx) = get_sale_info(&deps.storage, token_id, opt_err)?;
+        if !(stoken.sale_status == SaleStatus::ForSale){
+            return Err(StdError::generic_err(
+                "Token is not up for sale.",
+            ));
+        } else {
+            _price = stoken.token_price.unwrap();
+        }      
+
+        let token_value: Coin = Coin {
+            denom : "uscrt".to_string(),
+            amount: Uint128(u128::from(_price)),
+        };
+
+        price_info= token_value.clone();
+
+        if env.message.sent_funds.len() != 1 || env.message.sent_funds[0].amount < token_value.amount || env.message.sent_funds[0].denom != String::from("uscrt")
+        {
+            return Err(StdError::generic_err(
+                "Insufficient funds provided.",
+            ));
+        }
+
+        transfer_nft(
+            deps,
+            env,
+            config,
+            ContractStatus::Normal.to_u8(),
+            buyer.clone(),
+            token_id.to_string(),
+            None,
+        )?;
+
+    }
+
+
+    Ok(HandleResponse {
+        messages: vec![CosmosMsg::Bank(BankMsg::Send {
+            from_address: buyer,
+            to_address: deps.api.human_address(&seller_raw)?,
+            amount: vec![price_info], // 1mn uscrt = 1 SCRT
+        })],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::BuyToken {
+            status: Success
+        })?),
+    })
+}
 
 
 

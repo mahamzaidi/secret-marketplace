@@ -127,6 +127,9 @@ pub enum HandleMsg {
         token_id: String,
         price: u32,
     },
+    BuyToken {
+        token_id: String,
+    },
     /// mint new token
     MintNft {
         /// optional token id. if omitted, use current token index
@@ -620,6 +623,9 @@ pub enum HandleAnswer {
     SetPrice {
         token_id: String,
         token_price: u32,
+    },
+    BuyToken {
+        status: ResponseStatus,
     },
 
 }
