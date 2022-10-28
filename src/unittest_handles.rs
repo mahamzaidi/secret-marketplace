@@ -1,25 +1,35 @@
+#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+#![allow(warnings, unused)]
 #[cfg(test)]
+
 mod tests {
     use crate::contract::{check_permission, handle, init, query};
     use crate::expiration::Expiration;
     use crate::inventory::Inventory;
     use crate::msg::{
-        AccessLevel, Burn, ContractStatus, HandleAnswer, HandleMsg, InitConfig, InitMsg, Mint, PostInitCallback, QueryAnswer, QueryMsg, ReceiverInfo, Send, Transfer, Tx, TxAction,
+        AccessLevel, Burn, ContractStatus, HandleAnswer, HandleMsg, InitConfig, InitMsg, Mint,
+        PostInitCallback, QueryAnswer, QueryMsg, ReceiverInfo, SaleStatus, Send, TokenSaleInfo,
+        Transfer, Tx, TxAction,
     };
     use crate::receiver::Snip721ReceiveMsg;
     use crate::state::{
         get_txs, json_load, json_may_load, load, may_load, AuthList, Config, Permission,
-        PermissionType, CONFIG_KEY, MINTERS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST,
-        PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV, PREFIX_PRIV_META, PREFIX_PUB_META, PREFIX_RECEIVERS, PREFIX_VIEW_KEY,
+        PermissionType, CONFIG_KEY, FOR_SALE_KEY, MINTERS_KEY, PREFIX_ALL_PERMISSIONS,
+        PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV,
+        PREFIX_PRIV_META, PREFIX_PUB_META, PREFIX_RECEIVERS, PREFIX_TOKEN_SALE_INFO,
+        PREFIX_VIEW_KEY,
     };
     use crate::token::{Extension, Metadata, Token};
     use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
     use cosmwasm_std::testing::*;
     use cosmwasm_std::{
-        from_binary, to_binary, Api, Binary, BlockInfo, CanonicalAddr, Coin, CosmosMsg, Env, Extern, HandleResponse, HumanAddr, InitResponse, MessageInfo, StdError, StdResult, Uint128, WasmMsg,
+        coins, from_binary, to_binary, Api, Binary, BlockInfo, CanonicalAddr, Coin, CosmosMsg, Env,
+        Extern, HandleResponse, HumanAddr, InitResponse, MessageInfo, StdError, StdResult, Uint128,
+        WasmMsg,
     };
     use cosmwasm_storage::ReadonlyPrefixedStorage;
     use secret_toolkit::utils::space_pad;
+    use serde::de::value;
     use std::any::Any;
 
     // Helper functions
@@ -4673,7 +4683,7 @@ mod tests {
         };
         let _handle_result = handle(&mut deps, mock_env("admin", &[]), handle_msg);
 
-        // test unauthorized addres
+        // test unauthorized address
         let handle_msg = HandleMsg::BurnNft {
             token_id: "MyNFT".to_string(),
             memo: None,
@@ -11137,5 +11147,392 @@ mod tests {
             false,
         );
         assert!(check_perm.is_ok());
+    }
+
+    // test setting sale status
+    #[test]
+    fn test_sale_status() {
+        let (init_result, mut deps) =
+            init_helper_with_config(true, true, false, false, false, false, false);
+        assert!(
+            init_result.is_ok(),
+            "Init failed: {}",
+            init_result.err().unwrap()
+        );
+
+        // test setting sale status when contract status prevents it
+
+        let pub1 = Some(Metadata {
+            token_uri: None,
+            extension: Some(Extension {
+                name: Some("My3".to_string()),
+                description: Some("Pub 3".to_string()),
+                image: Some("URI 3".to_string()),
+                ..Extension::default()
+            }),
+        });
+        let handle_msg_a = HandleMsg::MintNft {
+            token_id: Some("NFT3".to_string()),
+            owner: Some(HumanAddr("admin".to_string())),
+            public_metadata: pub1.clone(),
+            private_metadata: None,
+            royalty_info: None,
+            serial_number: None,
+            transferable: Some(true),
+            memo: None,
+            padding: None,
+        };
+        let handle_result_a = handle(&mut deps, mock_env("admin", &[]), handle_msg_a);
+
+        let handle_msg_b = HandleMsg::SetContractStatus {
+            level: ContractStatus::StopAll,
+            padding: None,
+        };
+        let handle_result_b = handle(&mut deps, mock_env("admin", &[]), handle_msg_b);
+        let handle_msg_c = HandleMsg::SetSaleStatus {
+            token_id: "NFT3".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(7),
+        };
+        let handle_result_c = handle(&mut deps, mock_env("admin", &[]), handle_msg_c);
+        let error = extract_error_msg(handle_result_c);
+        assert!(error.contains("The contract admin has temporarily disabled this action"));
+
+        // test setting status when token id does not exist and token supply is public
+        let handle_msg_f = HandleMsg::SetContractStatus {
+            level: ContractStatus::Normal,
+            padding: None,
+        };
+        let handle_result_f = handle(&mut deps, mock_env("admin", &[]), handle_msg_f);
+
+        let handle_msg_d = HandleMsg::SetSaleStatus {
+            token_id: "Fides".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(7),
+        };
+        let handle_result_d = handle(&mut deps, mock_env("admin", &[]), handle_msg_d);
+
+        let error = extract_error_msg(handle_result_d);
+        assert!(error.contains("Token ID: Fides not found"));
+
+        // test non transferable token cannot be put up for sale
+        let pub1 = Some(Metadata {
+            token_uri: None,
+            extension: Some(Extension {
+                name: Some("My1".to_string()),
+                description: Some("Pub 1".to_string()),
+                image: Some("URI 1".to_string()),
+                ..Extension::default()
+            }),
+        });
+        let handle_msg_e = HandleMsg::MintNft {
+            token_id: Some("NFT1".to_string()),
+            owner: Some(HumanAddr("admin".to_string())),
+            public_metadata: pub1.clone(),
+            private_metadata: None,
+            royalty_info: None,
+            serial_number: None,
+            transferable: Some(false),
+            memo: None,
+            padding: None,
+        };
+        let handle_result_e = handle(&mut deps, mock_env("admin", &[]), handle_msg_e);
+
+        let _handle_msg = HandleMsg::SetSaleStatus {
+            token_id: "NFT1".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(6),
+        };
+        let _handle_result = handle(&mut deps, mock_env("admin", &[]), _handle_msg);
+
+        let error = extract_error_msg(_handle_result);
+        assert!(error.contains(
+            "Non-transferable tokens can not be sold, so setting sale status is meaningless"
+        ));
+
+        // test only owner can set sale status
+        let pub1 = Some(Metadata {
+            token_uri: None,
+            extension: Some(Extension {
+                name: Some("My2".to_string()),
+                description: Some("Pub 2".to_string()),
+                image: Some("URI 2".to_string()),
+                ..Extension::default()
+            }),
+        });
+        let handle_msg = HandleMsg::MintNft {
+            token_id: Some("NFT2".to_string()),
+            owner: Some(HumanAddr("admin".to_string())),
+            public_metadata: pub1.clone(),
+            private_metadata: None,
+            royalty_info: None,
+            serial_number: None,
+            transferable: Some(true),
+            memo: None,
+            padding: None,
+        };
+        let handle_result = handle(&mut deps, mock_env("admin", &[]), handle_msg);
+
+        let handle_msg_ = HandleMsg::SetSaleStatus {
+            token_id: "NFT2".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(1),
+        };
+        let handle_result_ = handle(&mut deps, mock_env("bob", &[]), handle_msg_);
+        let error = extract_error_msg(handle_result_);
+        assert!(error.contains("Only the owner of the token can change the sale status"));
+
+        let handle_msg_g = HandleMsg::SetSaleStatus {
+            token_id: "NFT2".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(1),
+        };
+        let handle_result_g = handle(&mut deps, mock_env("admin", &[]), handle_msg_g);
+
+        // test token id who is set for sale also gets saved in list of tokens for sale
+        let sale_store: Vec<String> = load(&deps.storage, FOR_SALE_KEY).unwrap();
+        let find_v = "NFT2".to_string();
+        assert!(sale_store.iter().find(|&s| *s == find_v).is_some());
+
+        // test token id is removed from FOR_SALE_KEY after status is changed from sale to not for sale
+        let handle_msg_h = HandleMsg::SetSaleStatus {
+            token_id: "NFT2".to_string(),
+            sale_status: SaleStatus::NotForSale,
+            price: Some(1),
+        };
+        let handle_result_h = handle(&mut deps, mock_env("admin", &[]), handle_msg_h);
+        let sale_store_: Vec<String> = load(&deps.storage, FOR_SALE_KEY).unwrap();
+        let find_v_ = "NFT2".to_string();
+        assert!(!sale_store_.contains(&find_v_));
+
+        // test price is set to 0 when status is set to not for sale
+        let handle_msg = HandleMsg::SetSaleStatus {
+            token_id: "NFT2".to_string(),
+            sale_status: SaleStatus::NotForSale,
+            price: Some(1),
+        };
+        let handle_result = handle(&mut deps, mock_env("admin", &[]), handle_msg);
+        let tok_key = 2u32.to_le_bytes();
+        let price_store = ReadonlyPrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, &deps.storage);
+        let price_run: TokenSaleInfo = json_load(&price_store, &tok_key).unwrap();
+        assert!(price_run.token_price == Some(0));
+
+        // test setting status when token id does not exist and token supply is private
+        let (init_result, mut deps) =
+            init_helper_with_config(false, false, false, false, false, false, false);
+        assert!(
+            init_result.is_ok(),
+            "Init failed: {}",
+            init_result.err().unwrap()
+        );
+
+        let handle_msg = HandleMsg::SetSaleStatus {
+            token_id: "Fides".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(7),
+        };
+
+        let handle_result = handle(&mut deps, mock_env("admin", &[]), handle_msg);
+
+        let error = extract_error_msg(handle_result);
+        assert!(error.contains("You are not authorized to perform this action on token Fides"));
+    }
+
+    // test setting price
+    #[test]
+    fn test_set_price() {
+        let (init_result, mut deps) =
+            init_helper_with_config(true, true, false, false, false, false, false);
+        assert!(
+            init_result.is_ok(),
+            "Init failed: {}",
+            init_result.err().unwrap()
+        );
+
+        let pub1 = Some(Metadata {
+            token_uri: None,
+            extension: Some(Extension {
+                name: Some("My3".to_string()),
+                description: Some("Pub 3".to_string()),
+                image: Some("URI 3".to_string()),
+                ..Extension::default()
+            }),
+        });
+        let handle_msg_a = HandleMsg::MintNft {
+            token_id: Some("NFT3".to_string()),
+            owner: Some(HumanAddr("admin".to_string())),
+            public_metadata: pub1.clone(),
+            private_metadata: None,
+            royalty_info: None,
+            serial_number: None,
+            transferable: Some(true),
+            memo: None,
+            padding: None,
+        };
+        let handle_result_a = handle(&mut deps, mock_env("admin", &[]), handle_msg_a);
+
+        // test setting price when provided input price is 0
+
+        let handle_msg_b = HandleMsg::SetContractStatus {
+            level: ContractStatus::StopAll,
+            padding: None,
+        };
+        let handle_result_b = handle(&mut deps, mock_env("admin", &[]), handle_msg_b);
+
+        let handle_msg1 = HandleMsg::SetPrice {
+            token_id: "NFT3".to_string(),
+            price: 6,
+        };
+        let handle_result1 = handle(&mut deps, mock_env("admin", &[]), handle_msg1);
+        let error = extract_error_msg(handle_result1);
+        assert!(error.contains("The contract admin has temporarily disabled this action"));
+
+        // test setting price when token is not for sale
+
+        let handle_msg_4 = HandleMsg::SetContractStatus {
+            level: ContractStatus::Normal,
+            padding: None,
+        };
+        let handle_result_4 = handle(&mut deps, mock_env("admin", &[]), handle_msg_4);
+
+        let handle_msg2 = HandleMsg::SetSaleStatus {
+            token_id: "NFT3".to_string(),
+            sale_status: SaleStatus::NotForSale,
+            price: Some(1),
+        };
+        let handle_result2 = handle(&mut deps, mock_env("admin", &[]), handle_msg2);
+
+        let handle_msg3 = HandleMsg::SetPrice {
+            token_id: "NFT3".to_string(),
+            price: 6,
+        };
+        let handle_result3 = handle(&mut deps, mock_env("admin", &[]), handle_msg3);
+        let error = extract_error_msg(handle_result3);
+        assert!(error.contains("Token is not up for sale so setting price is meaningless"));
+
+        // test updated price is saved in storage
+
+        let handle_msg4 = HandleMsg::SetSaleStatus {
+            token_id: "NFT3".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(1),
+        };
+        let handle_result4 = handle(&mut deps, mock_env("admin", &[]), handle_msg4);
+
+        let handle_msg5 = HandleMsg::SetPrice {
+            token_id: "NFT3".to_string(),
+            price: 5,
+        };
+        let handle_result5 = handle(&mut deps, mock_env("admin", &[]), handle_msg5);
+
+        let query_msg = QueryMsg::SaleInfo {
+            token_id: "NFT3".to_string(),
+        };
+        let query_result = query(&deps, query_msg);
+        let query_answer: QueryAnswer = from_binary(&query_result.unwrap()).unwrap();
+        match query_answer {
+            QueryAnswer::SaleInfo { sale_store } => {
+                assert_eq!(sale_store.token_price.unwrap(), 5);
+            }
+            _ => panic!("Updated token price not saved to storage"),
+        }
+    }
+    #[test]
+    fn test_buy_token() {
+        let (init_result, mut deps) =
+            init_helper_with_config(true, true, false, false, false, false, false);
+        assert!(
+            init_result.is_ok(),
+            "Init failed: {}",
+            init_result.err().unwrap()
+        );
+
+        // test when token id doesn't exist
+
+        let pub1 = Some(Metadata {
+            token_uri: None,
+            extension: Some(Extension {
+                name: Some("BuyMe".to_string()),
+                description: Some("Pub 3".to_string()),
+                image: Some("URI 3".to_string()),
+                ..Extension::default()
+            }),
+        });
+        let handle_msg_a = HandleMsg::MintNft {
+            token_id: Some("BuyMe".to_string()),
+            owner: Some(HumanAddr("admin".to_string())),
+            public_metadata: pub1.clone(),
+            private_metadata: None,
+            royalty_info: None,
+            serial_number: None,
+            transferable: Some(true),
+            memo: None,
+            padding: None,
+        };
+        let handle_result_a = handle(&mut deps, mock_env("admin", &[]), handle_msg_a);
+
+        let handle_msg4 = HandleMsg::BuyToken {
+            token_id: "DontBuyMe".to_string(),
+        };
+        let handle_result4 = handle(&mut deps, mock_env("alice", &[]), handle_msg4);
+        let error = extract_error_msg(handle_result4);
+        assert!(error.contains("Token ID: DontBuyMe not found"));
+
+        // test token can only be bought if it is up for sale
+
+        let handle_msg8 = HandleMsg::SetSaleStatus {
+            token_id: "BuyMe".to_string(),
+            sale_status: SaleStatus::NotForSale,
+            price: None,
+        };
+        let handle_result8 = handle(&mut deps, mock_env("admin", &[]), handle_msg8);
+
+        let handle_msg9 = HandleMsg::BuyToken {
+            token_id: "BuyMe".to_string(),
+        };
+        let handle_result9 = handle(
+            &mut deps,
+            mock_env("alice", &coins(1000000, "uscrt")),
+            handle_msg9,
+        );
+        let error = extract_error_msg(handle_result9);
+        assert!(error.contains("Cannot buy token which is not for sale"));
+
+        let sale_store: Vec<String> = load(&deps.storage, FOR_SALE_KEY).unwrap_or_default();
+        let value = "BuyMe".to_string();
+        assert!(!sale_store.contains(&value));
+
+        let handle_msg5 = HandleMsg::SetSaleStatus {
+            token_id: "BuyMe".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(2),
+        };
+        let handle_result5 = handle(&mut deps, mock_env("admin", &[]), handle_msg5);
+        let sale_store_: Vec<String> = load(&deps.storage, FOR_SALE_KEY).unwrap_or_default();
+        let value_ = "BuyMe".to_string();
+        assert!(sale_store_.contains(&value_));
+
+        // test token owner cannot buy token
+
+        let handle_msg6 = HandleMsg::BuyToken {
+            token_id: "BuyMe".to_string(),
+        };
+        let handle_result6 = handle(
+            &mut deps,
+            mock_env("admin", &coins(1000000, "uscrt")),
+            handle_msg6,
+        );
+        let error = extract_error_msg(handle_result6);
+        assert!(error.contains("Token owner cannot be the buyer of token"));
+
+        // test amount should be supplied while calling function
+
+        // let handle_msg7 = HandleMsg::BuyToken {
+        //     token_id: "BuyMe".to_string(),
+        // };
+        // let handle_result7 = handle(&mut deps, mock_env("bob", &[]), handle_msg7);
+        // let error = extract_error_msg(handle_result7);
+        // println!("{:?}", error);
+        // assert!(error.contains("Insufficient funds provided."));
     }
 }

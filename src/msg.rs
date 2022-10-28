@@ -1,3 +1,5 @@
+#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+#![allow(warnings, unused)]
 #![allow(clippy::large_enum_variant)]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -75,8 +77,8 @@ pub struct InitConfig {
 impl Default for InitConfig {
     fn default() -> Self {
         InitConfig {
-            public_token_supply: Some(true),
-            public_owner: Some(true),
+            public_token_supply: Some(false),
+            public_owner: Some(false),
             enable_sealed_metadata: Some(false),
             unwrapped_metadata_is_private: Some(false),
             minter_may_update_metadata: Some(true),
@@ -99,36 +101,22 @@ pub struct PostInitCallback {
     pub send: Vec<Coin>,
 }
 
-/// info needed to register current contract with another snip721
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct CallRegister {
-        /// target's address
-        pub bank_address: HumanAddr,
-        /// target's code hash
-        pub recipient_code_hash: String,
-        /// true if the contract also implements BacthReceiveNft.  Defaults to false
-        /// if not specified
-        pub also_implements_batch_receive_nft: Option<bool>,
-        pub padding: Option<String>,
-}
-
-
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleMsg {
-    /// set token sale status
-    SetSaleStatus {
+    BuyToken {
         token_id: String,
-        sale_status: SaleStatus,
-        price: Option<u32>,
     },
     /// set price of a token
     SetPrice {
         token_id: String,
         price: u32,
     },
-    BuyToken {
+    /// set token sale status
+    SetSaleStatus {
         token_id: String,
+        sale_status: SaleStatus,
+        price: Option<u32>,
     },
     /// mint new token
     MintNft {
@@ -432,15 +420,6 @@ pub enum HandleMsg {
         /// optional message length padding
         padding: Option<String>,
     },
-    BatchReceiveNft {
-        sender: HumanAddr,
-        from: HumanAddr,
-        token_ids: Vec<String>,
-        msg: Option<Binary>,
-    },
-    RegisterContractWithSnip721 {
-        msg: CallRegister,
-    },
 }
 
 /// permission access level
@@ -514,9 +493,39 @@ pub struct Send {
     pub memo: Option<String>,
 }
 
+/// a token's current sale information
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct TokenSaleInfo {
+    /// token whose sale status is being set
+    pub token_id: String,
+    /// sale status of token
+    pub sale_status: SaleStatus,
+    /// price of token
+    pub token_price: Option<u32>,
+}
+
+/// a token's current sale status
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum SaleStatus {
+    /// the token is up for sale
+    ForSale,
+    /// the token is not up for sale
+    NotForSale,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleAnswer {
+    /// buy a token that is for sale
+    BuyToken {
+        status: ResponseStatus,
+    },
+    /// Sets the price of a token if it is up for sale.
+    SetPrice {
+        token_id: String,
+        token_price: u32,
+    },
     /// MintNft will also display the minted token's ID in the log attributes under the
     /// key `minted` in case minting was done as a callback message
     MintNft {
@@ -526,9 +535,6 @@ pub enum HandleAnswer {
     /// key `minted` in case minting was done as a callback message
     BatchMintNft {
         token_ids: Vec<String>,
-    },
-    BatchReceiveNft {
-        token_id: String,
     },
     /// Displays the token ids of the first minted NFT and the last minted NFT.  Because these
     /// are serialized clones, the ids of all the tokens minted in between should be easily
@@ -613,21 +619,10 @@ pub enum HandleAnswer {
     RevokePermit {
         status: ResponseStatus,
     },
-    RegisterContractWithSnip721 {
-        status: ResponseStatus,
-    },
     SetSaleStatus {
         token_id: String,
         sale_status: SaleStatus,
     },
-    SetPrice {
-        token_id: String,
-        token_price: u32,
-    },
-    BuyToken {
-        status: ResponseStatus,
-    },
-
 }
 
 /// the address and viewing key making an authenticated query request
@@ -638,23 +633,6 @@ pub struct ViewerInfo {
     /// authentication key string
     pub viewing_key: String,
 }
-
-
-/// a token's current sale information
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct TokenSaleInfo {
-    pub token_id: String,
-    pub sale_status: SaleStatus,
-    pub token_price: Option<u32>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum SaleStatus {
-    ForSale,
-    NotForSale,
-}
-
 
 /// a recipient contract's code hash and whether it implements BatchReceiveNft
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -716,6 +694,10 @@ pub struct Tx {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
+    TokensForSale {},
+    SaleInfo {
+        token_id: String,
+    },
     /// display the contract's name and symbol
     ContractInfo {},
     /// display the contract's configuration
@@ -724,10 +706,6 @@ pub enum QueryMsg {
     Minters {},
     /// display the number of tokens controlled by the contract.  The token supply must
     /// either be public, or the querier must be an authenticated minter
-    TokensForSale {},
-    SaleInfo {
-        token_id: String,
-    },
     NumTokens {
         /// optional address and key requesting to view the number of tokens
         viewer: Option<ViewerInfo>,
@@ -756,7 +734,9 @@ pub enum QueryMsg {
         include_expired: Option<bool>,
     },
     /// displays the public metadata of a token
-    NftInfo { token_id: String },
+    NftInfo {
+        token_id: String,
+    },
     /// displays all the information contained in the OwnerOf and NftInfo queries
     AllNftInfo {
         token_id: String,
@@ -853,9 +833,13 @@ pub enum QueryMsg {
         viewing_key: Option<String>,
     },
     /// display if a token is unwrapped
-    IsUnwrapped { token_id: String },
+    IsUnwrapped {
+        token_id: String,
+    },
     /// display if a token is transferable
-    IsTransferable { token_id: String },
+    IsTransferable {
+        token_id: String,
+    },
     /// display that this contract implements non-transferable tokens
     ImplementsNonTransferableTokens {},
     /// display that this contract implements the use of the `token_subtype` metadata extension field
@@ -963,6 +947,12 @@ pub struct BatchNftDossierElement {
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryAnswer {
+    TokensForSale {
+        for_sale: Vec<String>,
+    },
+    SaleInfo {
+        sale_store: TokenSaleInfo,
+    },
     ContractInfo {
         name: String,
         symbol: String,
@@ -978,12 +968,6 @@ pub enum QueryAnswer {
     },
     Minters {
         minters: Vec<HumanAddr>,
-    },
-    TokensForSale {
-        for_sale: Vec<String>,
-    },
-    SaleInfo {
-        sale_store: TokenSaleInfo,
     },
     NumTokens {
         count: u32,
@@ -1074,7 +1058,6 @@ pub enum QueryAnswer {
     ContractCreator {
         creator: Option<HumanAddr>,
     },
-
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema, Debug)]
@@ -1083,7 +1066,6 @@ pub enum ResponseStatus {
     Success,
     Failure,
 }
-
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
