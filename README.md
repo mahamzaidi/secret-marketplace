@@ -25,7 +25,7 @@ secretcli tx compute execute $CONTRACT '{"set_sale_status": {"token_id":"1","sal
 ```
 secretcli tx compute execute $CONTRACT '{"set_price": {"token_id":"1","price":3}}' --from keplr --keyring-backend test
 ```
-4? To buy a token use this command:
+4) To buy a token use this command:
 ```
 secretcli tx compute execute $CONTRACT '{"buy_token": {"token_id":"1"}}' --amount 1000000uscrt --from bob --keyring-backend test
 ```
