@@ -59,11 +59,6 @@ const main = async () => {
     );
     console.log(`Wallet address=${accAddress}`);
 
-    // 1. Define your metadata
-    const publicMetadata = "this is fides technologies' first token";
-    const privateMetadata = "owns 10million";
-
-    // 2. Mint a new token to yourself
     const handleMsg = {
         buy_token: {
             token_id: "1",

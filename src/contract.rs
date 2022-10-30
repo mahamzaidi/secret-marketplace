@@ -481,6 +481,17 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
     pad_handle_result(response, BLOCK_SIZE)
 }
 
+/// Returns HandleResult
+///
+/// buys a token
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `priority` - u8 representation of highest status level this action is permitted at
+/// * `token_id` - token id of token
 pub fn buy_token<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
@@ -490,8 +501,9 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
 ) -> HandleResult {
     let buyer = (&env.message.sender).clone();
     let buyer_raw = deps.api.canonical_address(&env.message.sender)?;
-    let mut seller_raw: CanonicalAddr = CanonicalAddr::default();
-    let mut price_info: Coin = Coin::default();
+    let mut price_info: Vec<Coin> = Vec::new();
+    let this_contract = (env.contract.address).clone();
+    let mut token_value: Vec<Coin> = Vec::new();
 
     // check if token_id exists
     let map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
@@ -510,11 +522,11 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
         Some(&*err_msg)
     };
     let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
+    let seller_raw: CanonicalAddr = (token.owner).clone();
 
     // if token exists make your checks
     if may_exist.is_some() {
         // check if token is transferable
-
         if !token.transferable {
             return Err(StdError::generic_err(
                 "Non-transferable tokens can not be sold, so setting sale status is meaningless",
@@ -522,15 +534,12 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
         }
         // check if token owner is trying to buy the token
         if token.owner == buyer_raw {
-            seller_raw = token.owner;
             return Err(StdError::generic_err(
                 "Token owner cannot be the buyer of token",
             ));
         }
 
-        let d_err: String;
-        d_err = format!("Token ID: {} not found in get_sale_info", token_id);
-        let (ptoken, pidx) = get_sale_info(&deps.storage, token_id, Some(&d_err))?;
+        let (ptoken, pidx) = get_sale_info(&deps.storage, token_id, None)?;
         let token_key = pidx.to_le_bytes();
         let info_store = ReadonlyPrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, &deps.storage);
         let stored_token: TokenSaleInfo = json_load(&info_store, &token_key)?;
@@ -540,58 +549,67 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
             return Err(StdError::generic_err(
                 "Cannot buy token which is not for sale",
             ));
-
-            // check if token has appropriate price set
-            let tprice: Option<u32> = Some((ptoken.token_price).unwrap());
-            format!("token price is {:?}", tprice);
-            if tprice == None || tprice == Some(0) {
-                return Err(StdError::generic_err("Invalid price. Set price of token"));
-            }
-
-            let tprice_int = tprice.unwrap();
-            let token_value: Coin = Coin {
-                denom: "uscrt".to_string(),
-                amount: Uint128(u128::from(tprice.unwrap())),
-            };
-
-            price_info = token_value.clone();
-
-            if env.message.sent_funds.len() != 1
-                || env.message.sent_funds[0].amount < token_value.amount
-                || env.message.sent_funds[0].denom != String::from("uscrt")
-            {
-                return Err(StdError::generic_err("Insufficient funds provided."));
-            }
-
-            transfer_nft(
-                deps,
-                env,
-                config,
-                ContractStatus::Normal.to_u8(),
-                buyer.clone(),
-                token_id.to_string(),
-                None,
-            )?;
         }
+
+        // check if token has appropriate price set
+        let tprice: Option<u32> = Some((ptoken.token_price).unwrap());
+        if tprice == None || tprice == Some(0) {
+            return Err(StdError::generic_err("Invalid price. Set price of token"));
+        }
+
+        let tprice_int = tprice.unwrap();
+        token_value.push(Coin {
+            denom: "uscrt".to_string(),
+            amount: Uint128(u128::from(tprice.unwrap())),
+        });
+
+        price_info.push(Coin {
+            denom: "uscrt".to_string(),
+            amount: Uint128(u128::from(tprice.unwrap())),
+        });
+
+        if env.message.sent_funds.len() != 1
+            || env.message.sent_funds[0].amount < token_value[0].amount
+            || env.message.sent_funds[0].denom != String::from("uscrt")
+        {
+            return Err(StdError::generic_err("Insufficient funds provided"));
+        }
+
+        let transfers = Some(vec![Transfer {
+            recipient: buyer.clone(),
+            token_ids: vec![token_id.to_string()],
+            memo: None,
+        }]);
+        let _m = send_list(deps, &env, config, &seller_raw, transfers, None)?;
     }
-    let sale_str = format!(
-        "Token ID : {} bought by {} for price {} uscrt",
-        token_id.to_string(),
-        buyer.clone().to_string(),
-        price_info.amount,
-    );
 
     Ok(HandleResponse {
         messages: vec![CosmosMsg::Bank(BankMsg::Send {
-            from_address: buyer,
-            to_address: deps.api.human_address(&seller_raw)?,
-            amount: vec![price_info],
+            from_address: this_contract,
+            to_address: buyer,
+            amount: token_value,
         })],
-        log: vec![log("Sale made", &sale_str)],
-        data: Some(to_binary(&HandleAnswer::BuyToken { status: Success })?),
+        log: vec![log("Token sold", &token_id)],
+        data: Some(to_binary(&HandleAnswer::BuyToken {
+            token_id: token_id.to_string(),
+            buyer: env.message.sender,
+            price: price_info,
+        })?),
     })
 }
 
+/// Returns HandleResult
+///
+/// Sets or updates token price
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `priority` - u8 representation of highest status level this action is permitted at
+/// * `token_id` - optional token id, if not specified, use token index
+/// * `price` - price that you want to set
 pub fn set_price<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
@@ -647,7 +665,7 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
 
     Ok(HandleResponse {
         messages: vec![],
-        log: vec![log("price updated", &token_id)],
+        log: vec![log("Price updated", &token_id)],
         data: Some(to_binary(&HandleAnswer::SetPrice {
             token_id: token_id.to_string(),
             token_price: price,
@@ -655,6 +673,16 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
     })
 }
 
+/// Returns StdResult<(TokenSaleInfo, u32)>
+///
+/// returns the specified token's sale status and its identifier index
+///
+/// # Arguments
+///
+/// * `storage` - a reference to contract's storage
+/// * `token_id` - token id string slice
+/// * `custom_err` - optional custom error message to use if don't want to reveal that a
+/// token does not exist
 pub fn get_sale_info<S: ReadonlyStorage>(
     storage: &S,
     token_id: &str,
@@ -678,6 +706,19 @@ pub fn get_sale_info<S: ReadonlyStorage>(
     Ok((token, idx))
 }
 
+/// Returns HandleResult
+///
+/// Set the sale status of token
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `priority` - u8 representation of highest status level this action is permitted at
+/// * `token_id` - token id of token
+/// * `sale_status` - SaleStatus for this token
+/// * `price` - price of token (will be set to 0 if NotForSale)
 pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
@@ -2152,6 +2193,11 @@ pub fn query<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>, msg: QueryM
     pad_query_result(response, BLOCK_SIZE)
 }
 
+/// Returns QueryResult displaying all token ids up for sale
+///
+/// # Arguments
+///
+/// * `deps` - a reference to Extern containing all the contract's external dependencies
 pub fn query_tokens_for_sale<S: Storage, A: Api, Q: Querier>(
     deps: &Extern<S, A, Q>,
 ) -> QueryResult {
@@ -2159,6 +2205,12 @@ pub fn query_tokens_for_sale<S: Storage, A: Api, Q: Querier>(
     to_binary(&QueryAnswer::TokensForSale { for_sale })
 }
 
+/// Returns QueryResult displaying all SaleInfo of the specified token ids
+///
+/// # Arguments
+///
+/// * `deps` - a reference to Extern containing all the contract's external dependencies
+/// * `token_id` - token id whose sale info is being requested
 pub fn query_sale_info<S: Storage, A: Api, Q: Querier>(
     deps: &Extern<S, A, Q>,
     token_id: &str,

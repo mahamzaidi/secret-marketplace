@@ -11525,14 +11525,69 @@ mod tests {
         let error = extract_error_msg(handle_result6);
         assert!(error.contains("Token owner cannot be the buyer of token"));
 
-        // test amount should be supplied while calling function
+        // test message sender is owner of token after successful execution of function
 
-        // let handle_msg7 = HandleMsg::BuyToken {
-        //     token_id: "BuyMe".to_string(),
-        // };
-        // let handle_result7 = handle(&mut deps, mock_env("bob", &[]), handle_msg7);
-        // let error = extract_error_msg(handle_result7);
-        // println!("{:?}", error);
-        // assert!(error.contains("Insufficient funds provided."));
+        let pub2 = Some(Metadata {
+            token_uri: None,
+            extension: Some(Extension {
+                name: Some("2".to_string()),
+                description: Some("Pub 2".to_string()),
+                image: Some("URI 2".to_string()),
+                ..Extension::default()
+            }),
+        });
+        let handle_msg_10 = HandleMsg::MintNft {
+            token_id: Some("2".to_string()),
+            owner: Some(HumanAddr("admin".to_string())),
+            public_metadata: pub2.clone(),
+            private_metadata: None,
+            royalty_info: None,
+            serial_number: None,
+            transferable: Some(true),
+            memo: None,
+            padding: None,
+        };
+        let handle_result_10 = handle(&mut deps, mock_env("admin", &[]), handle_msg_10);
+
+        let handle_msg5 = HandleMsg::SetSaleStatus {
+            token_id: "2".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(2),
+        };
+        let handle_result5 = handle(&mut deps, mock_env("admin", &[]), handle_msg5);
+
+        let handle_msg7 = HandleMsg::BuyToken {
+            token_id: "2".to_string(),
+        };
+        let handle_result7 = handle(
+            &mut deps,
+            mock_env("alice", &coins(2, "uscrt")),
+            handle_msg7,
+        );
+
+        let tok_key = 1u32.to_le_bytes();
+        let alice_raw = deps
+            .api
+            .canonical_address(&HumanAddr("alice".to_string()))
+            .unwrap();
+        let info_store = ReadonlyPrefixedStorage::new(PREFIX_INFOS, &deps.storage);
+        let token1: Token = json_load(&info_store, &tok_key).unwrap();
+        assert_eq!(token1.owner, alice_raw);
+
+        // test sent funds amount should not be less than price of token
+
+        let handle_msg5 = HandleMsg::SetSaleStatus {
+            token_id: "2".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(3),
+        };
+        let handle_result5 = handle(&mut deps, mock_env("alice", &[]), handle_msg5);
+
+        let handle_msg7 = HandleMsg::BuyToken {
+            token_id: "2".to_string(),
+        };
+        let handle_result7 = handle(&mut deps, mock_env("bob", &coins(1, "uscrt")), handle_msg7);
+        let error = extract_error_msg(handle_result7);
+        assert!(error.contains("Insufficient funds provided"));
     }
 }

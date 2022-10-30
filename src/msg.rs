@@ -104,18 +104,25 @@ pub struct PostInitCallback {
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleMsg {
+    /// buy a token
     BuyToken {
+        /// token id of the token
         token_id: String,
     },
     /// set price of a token
     SetPrice {
+        /// token id of the token
         token_id: String,
+        /// price of token
         price: u32,
     },
     /// set token sale status
     SetSaleStatus {
+        /// token id of the token
         token_id: String,
+        /// sale status of type SaleStatus enum
         sale_status: SaleStatus,
+        /// price of token
         price: Option<u32>,
     },
     /// mint new token
@@ -519,7 +526,9 @@ pub enum SaleStatus {
 pub enum HandleAnswer {
     /// buy a token that is for sale
     BuyToken {
-        status: ResponseStatus,
+        token_id: String,
+        buyer: HumanAddr,
+        price: Vec<Coin>,
     },
     /// Sets the price of a token if it is up for sale.
     SetPrice {
@@ -694,10 +703,10 @@ pub struct Tx {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
+    /// displays all the token ids up for sale
     TokensForSale {},
-    SaleInfo {
-        token_id: String,
-    },
+    /// displays the entire sale info of the specified token
+    SaleInfo { token_id: String },
     /// display the contract's name and symbol
     ContractInfo {},
     /// display the contract's configuration
@@ -734,9 +743,7 @@ pub enum QueryMsg {
         include_expired: Option<bool>,
     },
     /// displays the public metadata of a token
-    NftInfo {
-        token_id: String,
-    },
+    NftInfo { token_id: String },
     /// displays all the information contained in the OwnerOf and NftInfo queries
     AllNftInfo {
         token_id: String,
@@ -833,13 +840,9 @@ pub enum QueryMsg {
         viewing_key: Option<String>,
     },
     /// display if a token is unwrapped
-    IsUnwrapped {
-        token_id: String,
-    },
+    IsUnwrapped { token_id: String },
     /// display if a token is transferable
-    IsTransferable {
-        token_id: String,
-    },
+    IsTransferable { token_id: String },
     /// display that this contract implements non-transferable tokens
     ImplementsNonTransferableTokens {},
     /// display that this contract implements the use of the `token_subtype` metadata extension field
