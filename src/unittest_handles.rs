@@ -11589,5 +11589,21 @@ mod tests {
         let handle_result7 = handle(&mut deps, mock_env("bob", &coins(1, "uscrt")), handle_msg7);
         let error = extract_error_msg(handle_result7);
         assert!(error.contains("Insufficient funds provided"));
+
+        // test sent funds shouldn't be greater than price of token
+
+        let handle_msg5 = HandleMsg::SetSaleStatus {
+            token_id: "2".to_string(),
+            sale_status: SaleStatus::ForSale,
+            price: Some(3),
+        };
+        let handle_result5 = handle(&mut deps, mock_env("alice", &[]), handle_msg5);
+
+        let handle_msg7 = HandleMsg::BuyToken {
+            token_id: "2".to_string(),
+        };
+        let handle_result7 = handle(&mut deps, mock_env("bob", &coins(4, "uscrt")), handle_msg7);
+        let error = extract_error_msg(handle_result7);
+        assert!(error.contains("Funds sent exceeds funds needed"));
     }
 }

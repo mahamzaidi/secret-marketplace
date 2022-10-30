@@ -14,7 +14,7 @@
 
 ## Instantiation
 
-6) INIT='{"name":"contract-marketplace","entropy":"fides"}'
+6) INIT='{"name":"contract-marketplace","entropy":"fides", "symbol":"jh","config":{"public_token_supply":true,"public_owner":true}}'
 
 7) CODE_ID=<code_id obtained as a result of command no. 4>
 

@@ -575,6 +575,10 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
             return Err(StdError::generic_err("Insufficient funds provided"));
         }
 
+        if env.message.sent_funds[0].amount > token_value[0].amount {
+            return Err(StdError::generic_err("Funds sent exceeds funds needed"));
+        }
+
         let transfers = Some(vec![Transfer {
             recipient: buyer.clone(),
             token_ids: vec![token_id.to_string()],
