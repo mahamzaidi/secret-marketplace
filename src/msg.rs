@@ -104,6 +104,8 @@ pub struct PostInitCallback {
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleMsg {
+    /// withdraw funds from contract
+    Withdraw { receiver_addr: HumanAddr },
     /// buy a token
     BuyToken {
         /// token id of the token
@@ -524,6 +526,9 @@ pub enum SaleStatus {
 #[derive(Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleAnswer {
+    WithdrawFunds {
+        status: ResponseStatus,
+    },
     /// buy a token that is for sale
     BuyToken {
         token_id: String,
@@ -1075,6 +1080,7 @@ pub enum ResponseStatus {
 pub enum ContractStatus {
     Normal,
     StopTransactions,
+    WithdrawFunds,
     StopAll,
 }
 
@@ -1084,7 +1090,8 @@ impl ContractStatus {
         match self {
             ContractStatus::Normal => 0,
             ContractStatus::StopTransactions => 1,
-            ContractStatus::StopAll => 2,
+            ContractStatus::WithdrawFunds => 2,
+            ContractStatus::StopAll => 3,
         }
     }
 }

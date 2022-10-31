@@ -477,8 +477,43 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             ContractStatus::StopTransactions.to_u8(),
             &token_id,
         ),
+        HandleMsg::Withdraw { receiver_addr } => withdraw_funds(
+            deps,
+            env,
+            &config,
+            ContractStatus::WithdrawFunds.to_u8(),
+            receiver_addr,
+        ),
     };
     pad_handle_result(response, BLOCK_SIZE)
+}
+
+pub fn withdraw_funds<S: Storage, A: Api, Q: Querier>(
+    deps: &Extern<S, A, Q>,
+    env: Env,
+    config: &Config,
+    priority: u8,
+    receiver_addr: HumanAddr,
+) -> HandleResult {
+    check_status(config.status, priority)?;
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    let this_contract = (env.contract.address).clone();
+    if config.admin != sender_raw {
+        return Err(StdError::generic_err(
+            "This is an admin command and can only be run from the admin address",
+        ));
+    }
+    let contract_bal = deps.querier.query_balance(this_contract.clone(), "uscrt")?;
+    let _amount = contract_bal.amount;
+    Ok(HandleResponse {
+        messages: vec![CosmosMsg::Bank(BankMsg::Send {
+            from_address: this_contract,
+            to_address: receiver_addr,
+            amount: vec![contract_bal],
+        })],
+        log: vec![log("Funds withdrawn", _amount)],
+        data: Some(to_binary(&HandleAnswer::WithdrawFunds { status: Success })?),
+    })
 }
 
 /// Returns HandleResult
@@ -499,6 +534,7 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
     priority: u8,
     token_id: &str,
 ) -> HandleResult {
+    check_status(config.status, priority)?;
     let buyer = (&env.message.sender).clone();
     let buyer_raw = deps.api.canonical_address(&env.message.sender)?;
     let mut price_info: Vec<Coin> = Vec::new();
@@ -523,6 +559,7 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
     };
     let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
     let seller_raw: CanonicalAddr = (token.owner).clone();
+    let seller = deps.api.human_address(&seller_raw)?;
 
     // if token exists make your checks
     if may_exist.is_some() {
@@ -590,7 +627,7 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
     Ok(HandleResponse {
         messages: vec![CosmosMsg::Bank(BankMsg::Send {
             from_address: this_contract,
-            to_address: buyer,
+            to_address: seller,
             amount: token_value,
         })],
         log: vec![log("Token sold", &token_id)],
