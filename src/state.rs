@@ -64,10 +64,9 @@ pub const PREFIX_REVOKED_PERMITS: &str = "revoke";
 /// prefix for the storage of a token's current sale status
 pub const PREFIX_TOKEN_SALE_INFO: &[u8] = b"tokensaleinfo";
 /// prefix for the storage of all token sales made
-pub const PREFIX_TOKEN_SALE: &[u8] = b"tokensale";
-/// prefix for the storage of nfts received 
+pub const PREFIX_SALE_NUM: &[u8] = b"tokensale";
+/// prefix for the storage of nfts received
 pub const RECEIVED_NFT_KEY: &[u8] = b"received";
-
 
 /// Token contract config
 #[derive(Serialize, Debug, Deserialize, Clone, PartialEq)]

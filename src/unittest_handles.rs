@@ -12,12 +12,13 @@ mod tests {
         Transfer, Tx, TxAction,
     };
     use crate::receiver::Snip721ReceiveMsg;
+    use crate::royalties::{Royalty, RoyaltyInfo};
     use crate::state::{
         get_txs, json_load, json_may_load, load, may_load, AuthList, Config, Permission,
         PermissionType, CONFIG_KEY, FOR_SALE_KEY, MINTERS_KEY, PREFIX_ALL_PERMISSIONS,
         PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID, PREFIX_MAP_TO_INDEX, PREFIX_OWNER_PRIV,
-        PREFIX_PRIV_META, PREFIX_PUB_META, PREFIX_RECEIVERS, PREFIX_TOKEN_SALE_INFO,
-        PREFIX_VIEW_KEY,
+        PREFIX_PRIV_META, PREFIX_PUB_META, PREFIX_RECEIVERS, PREFIX_SALE_NUM,
+        PREFIX_TOKEN_SALE_INFO, PREFIX_VIEW_KEY,
     };
     use crate::token::{Extension, Metadata, Token};
     use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
@@ -11549,6 +11550,26 @@ mod tests {
         };
         let handle_result_10 = handle(&mut deps, mock_env("admin", &[]), handle_msg_10);
 
+        // test sale_num_key for minted token id is 0
+
+        // let tok_key_ = 0u32.to_le_bytes();
+        // let info_store = ReadonlyPrefixedStorage::new(PREFIX_SALE_NUM, &deps.storage);
+        // let num_store: i32 = load(&info_store, &tok_key_).unwrap();
+        // assert_eq!(num_store, 0);
+
+        let handle_msg = HandleMsg::SetRoyaltyInfo {
+            token_id: Some("2".to_string()),
+            royalty_info: Some(RoyaltyInfo {
+                decimal_places_in_rates: 2,
+                royalties: Some(vec![Royalty {
+                    recipient: HumanAddr("admin".to_string()),
+                    rate: 2,
+                }])
+                .unwrap(),
+            }),
+            padding: None,
+        };
+
         let handle_msg5 = HandleMsg::SetSaleStatus {
             token_id: "2".to_string(),
             sale_status: SaleStatus::ForSale,
@@ -11595,15 +11616,32 @@ mod tests {
         let handle_msg5 = HandleMsg::SetSaleStatus {
             token_id: "2".to_string(),
             sale_status: SaleStatus::ForSale,
-            price: Some(3),
+            price: Some(10),
         };
         let handle_result5 = handle(&mut deps, mock_env("alice", &[]), handle_msg5);
 
         let handle_msg7 = HandleMsg::BuyToken {
             token_id: "2".to_string(),
         };
-        let handle_result7 = handle(&mut deps, mock_env("bob", &coins(4, "uscrt")), handle_msg7);
+        let handle_result7 = handle(&mut deps, mock_env("bob", &coins(11, "uscrt")), handle_msg7);
         let error = extract_error_msg(handle_result7);
         assert!(error.contains("Funds sent exceeds funds needed"));
+
+        // test after successful transfer, sale status changes back to not for sale
+
+        let handle_msg7 = HandleMsg::BuyToken {
+            token_id: "2".to_string(),
+        };
+        let handle_result7 = handle(&mut deps, mock_env("bob", &coins(10, "uscrt")), handle_msg7);
+
+        let info_store = ReadonlyPrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, &mut deps.storage);
+        let token_store: TokenSaleInfo = json_load(&info_store, &tok_key).unwrap();
+        assert_eq!(token_store.sale_status, SaleStatus::NotForSale);
+
+        // test after successful transfer, token id is removed from list of tokens up for sale
+
+        let sale_store_: Vec<String> = load(&deps.storage, FOR_SALE_KEY).unwrap_or_default();
+        let value_ = "2".to_string();
+        assert_eq!(sale_store_.contains(&value_), false);
     }
 }

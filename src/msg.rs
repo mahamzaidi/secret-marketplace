@@ -513,6 +513,13 @@ pub struct TokenSaleInfo {
     pub token_price: Option<u32>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum SaleNum {
+    PrimarySale,
+    SecondarySale,
+}
+
 /// a token's current sale status
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -532,7 +539,6 @@ pub enum HandleAnswer {
     /// buy a token that is for sale
     BuyToken {
         token_id: String,
-        buyer: HumanAddr,
         price: Vec<Coin>,
     },
     /// Sets the price of a token if it is up for sale.

@@ -3,19 +3,19 @@
 
 use cosmwasm_std::{
     from_slice, log, to_binary, Api, BankMsg, Binary, BlockInfo, CanonicalAddr, Coin, CosmosMsg,
-    Env, Extern, HandleResponse, HandleResult, HumanAddr, InitResponse, InitResult, Querier,
-    QueryResult, ReadonlyStorage, StdError, StdResult, Storage, Uint128, WasmMsg,
+    Decimal, Env, Extern, HandleResponse, HandleResult, HumanAddr, InitResponse, InitResult,
+    Querier, QueryResult, ReadonlyStorage, StdError, StdResult, Storage, Uint128, WasmMsg,
 };
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
+use num_traits::pow;
 use primitive_types::U256;
-/// This contract implements SNIP-721 standard:
-/// https://github.com/SecretFoundation/SNIPs/blob/master/SNIP-721.md
-use std::collections::HashSet;
-
 use secret_toolkit::{
     permit::{validate, Permit, RevokedPermits},
     utils::{pad_handle_result, pad_query_result},
 };
+/// This contract implements SNIP-721 standard:
+/// https://github.com/SecretFoundation/SNIPs/blob/master/SNIP-721.md
+use std::{collections::HashSet, ops::Deref};
 
 use crate::expiration::Expiration;
 use crate::inventory::{Inventory, InventoryIter};
@@ -23,12 +23,12 @@ use crate::mint_run::{SerialNumber, StoredMintRunInfo};
 use crate::msg::{
     AccessLevel, BatchNftDossierElement, Burn, ContractStatus, Cw721Approval, Cw721OwnerOfResponse,
     HandleAnswer, HandleMsg, InitMsg, Mint, QueryAnswer, QueryMsg, QueryWithPermit, ReceiverInfo,
-    ResponseStatus::Success, SaleStatus, Send, Snip721Approval, TokenSaleInfo, Transfer,
+    ResponseStatus::Success, SaleNum, SaleStatus, Send, Snip721Approval, TokenSaleInfo, Transfer,
     ViewerInfo,
 };
 use crate::rand::sha_256;
 use crate::receiver::{batch_receive_nft_msg, receive_nft_msg};
-use crate::royalties::{RoyaltyInfo, StoredRoyaltyInfo};
+use crate::royalties::{Royalty, RoyaltyInfo, StoredRoyalty, StoredRoyaltyInfo};
 use crate::state::{
     get_txs, json_load, json_may_load, json_save, load, may_load, remove, save, store_burn,
     store_mint, store_transfer, AuthList, Config, Permission, PermissionType, ReceiveRegistration,
@@ -36,7 +36,7 @@ use crate::state::{
     MY_ADDRESS_KEY, PREFIX_ALL_PERMISSIONS, PREFIX_AUTHLIST, PREFIX_INFOS, PREFIX_MAP_TO_ID,
     PREFIX_MAP_TO_INDEX, PREFIX_MINT_RUN, PREFIX_MINT_RUN_NUM, PREFIX_OWNER_PRIV, PREFIX_PRIV_META,
     PREFIX_PUB_META, PREFIX_RECEIVERS, PREFIX_REVOKED_PERMITS, PREFIX_ROYALTY_INFO,
-    PREFIX_TOKEN_SALE_INFO, PREFIX_VIEW_KEY, PRNG_SEED_KEY, RECEIVED_NFT_KEY,
+    PREFIX_SALE_NUM, PREFIX_TOKEN_SALE_INFO, PREFIX_VIEW_KEY, PRNG_SEED_KEY, RECEIVED_NFT_KEY,
 };
 use crate::token::{Metadata, Token};
 use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
@@ -540,6 +540,9 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
     let mut price_info: Vec<Coin> = Vec::new();
     let this_contract = (env.contract.address).clone();
     let mut token_value: Vec<Coin> = Vec::new();
+    let mut decimal_places: u8;
+    let mut rate: u16;
+    let mut royalties: Vec<StoredRoyalty> = Vec::new();
 
     // check if token_id exists
     let map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
@@ -560,6 +563,8 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
     let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
     let seller_raw: CanonicalAddr = (token.owner).clone();
     let seller = deps.api.human_address(&seller_raw)?;
+    let (ptoken, pidx) = get_sale_info(&mut deps.storage, token_id, opt_err)?;
+    let token_key = idx.to_le_bytes();
 
     // if token exists make your checks
     if may_exist.is_some() {
@@ -569,17 +574,13 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
                 "Non-transferable tokens can not be sold, so setting sale status is meaningless",
             ));
         }
+
         // check if token owner is trying to buy the token
         if token.owner == buyer_raw {
             return Err(StdError::generic_err(
                 "Token owner cannot be the buyer of token",
             ));
         }
-
-        let (ptoken, pidx) = get_sale_info(&deps.storage, token_id, None)?;
-        let token_key = pidx.to_le_bytes();
-        let info_store = ReadonlyPrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, &deps.storage);
-        let stored_token: TokenSaleInfo = json_load(&info_store, &token_key)?;
 
         // check if token is up for sale
         if !(ptoken.sale_status == SaleStatus::ForSale) {
@@ -624,19 +625,174 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
         let _m = send_list(deps, &env, config, &seller_raw, transfers, None)?;
     }
 
-    Ok(HandleResponse {
-        messages: vec![CosmosMsg::Bank(BankMsg::Send {
+    let x = &this_contract;
+    /* all deductions to be made from this original value */
+    let original = token_value[0].amount.clone();
+    /* stores final amount sent to seller */
+    let mut coins = token_value[0].amount.clone();
+    let roy_store = ReadonlyPrefixedStorage::new(PREFIX_ROYALTY_INFO, &deps.storage);
+    let default_roy: Option<StoredRoyaltyInfo> =
+        may_load(&deps.storage, DEFAULT_ROYALTY_KEY).unwrap();
+    let may_roy_inf: Option<StoredRoyaltyInfo> = may_load(&roy_store, &token_key).unwrap();
+    let mut all_transfers: Vec<CosmosMsg> = Vec::new();
+
+    let num: i32 = get_sale_num_type(&deps.storage, &token_key);
+
+    // if this is secondary sale then deduct royalty amount if configured
+    if num == 1 {
+        // get the royalty information if present
+        if may_roy_inf.is_none() && default_roy.is_some() {
+            decimal_places = default_roy.as_ref().unwrap().decimal_places_in_rates;
+            royalties = default_roy.unwrap().royalties.clone();
+            for royalty in royalties.iter() {
+                let seller_ = deps.api.human_address(&royalty.recipient).unwrap();
+                rate = royalty.rate;
+                let after_royalty_ded = original
+                    * Decimal::from_ratio(
+                        rate as u128,
+                        pow(10 as u128, usize::from(decimal_places)),
+                    );
+                let royalty_amount = (original - after_royalty_ded).unwrap();
+
+                all_transfers.push(CosmosMsg::Bank(BankMsg::Send {
+                    from_address: x.clone(),
+                    to_address: seller_,
+                    amount: vec![Coin {
+                        denom: "uscrt".to_string(),
+                        amount: royalty_amount,
+                    }],
+                }));
+
+                all_transfers.push(CosmosMsg::Bank(BankMsg::Send {
+                    from_address: x.clone(),
+                    to_address: seller.clone(),
+                    amount: vec![Coin {
+                        denom: "uscrt".to_string(),
+                        amount: after_royalty_ded,
+                    }],
+                }));
+
+                // coins = (coins - (coins * Decimal::percent(98))).unwrap();
+                // coins = (coins - royalty_amount).unwrap();
+            }
+        } else if may_roy_inf.is_some() {
+            decimal_places = may_roy_inf.as_ref().unwrap().decimal_places_in_rates;
+            royalties = may_roy_inf.unwrap().royalties.clone();
+            for royalty in royalties.iter() {
+                let seller_ = deps.api.human_address(&royalty.recipient).unwrap();
+                rate = royalty.rate;
+                let after_royalty_ded = original
+                    * Decimal::from_ratio(
+                        rate as u128,
+                        pow(10 as u128, usize::from(decimal_places)),
+                    );
+                let royalty_amount = (original - after_royalty_ded).unwrap();
+
+                all_transfers.push(CosmosMsg::Bank(BankMsg::Send {
+                    from_address: x.clone(),
+                    to_address: seller_,
+                    amount: vec![Coin {
+                        denom: "uscrt".to_string(),
+                        amount: royalty_amount,
+                    }],
+                }));
+
+                all_transfers.push(CosmosMsg::Bank(BankMsg::Send {
+                    from_address: x.clone(),
+                    to_address: seller.clone(),
+                    amount: vec![Coin {
+                        denom: "uscrt".to_string(),
+                        amount: after_royalty_ded,
+                    }],
+                }));
+            }
+        } else if may_roy_inf.is_none() && default_roy.is_none() {
+            // deduct marketplace fee from total amount
+            coins = original * Decimal::percent(98);
+            token_value[0].amount = coins;
+
+            all_transfers.push(CosmosMsg::Bank(BankMsg::Send {
+                from_address: x.clone(),
+                to_address: seller,
+                amount: vec![Coin {
+                    denom: "uscrt".to_string(),
+                    amount: token_value[0].amount,
+                }],
+            }));
+        }
+    }
+    /* when its the primary sale of token*/
+    else if num == 0 {
+        // deduct marketplace fee from total amount
+        coins = original * Decimal::percent(98);
+        token_value[0].amount = coins;
+
+        all_transfers.push(CosmosMsg::Bank(BankMsg::Send {
             from_address: this_contract,
-            to_address: seller,
-            amount: token_value,
-        })],
+            to_address: seller.clone(),
+            amount: vec![Coin {
+                denom: "uscrt".to_string(),
+                amount: token_value[0].amount,
+            }],
+        }));
+        set_sale_num(deps, &token_key, 1);
+    }
+
+    revert_sale_status(deps, env, config, token_id);
+
+    Ok(HandleResponse {
+        messages: all_transfers,
         log: vec![log("Token sold", &token_id)],
         data: Some(to_binary(&HandleAnswer::BuyToken {
             token_id: token_id.to_string(),
-            buyer: env.message.sender,
             price: price_info,
         })?),
     })
+}
+
+fn get_sale_num_type<S: ReadonlyStorage>(storage: &S, token_key: &[u8]) -> (i32) {
+    let sale_num = ReadonlyPrefixedStorage::new(PREFIX_SALE_NUM, storage);
+    let num = load(&sale_num, token_key).unwrap();
+    return num;
+}
+
+fn set_sale_num<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    token_key: &[u8],
+    value: i32,
+) -> () {
+    let mut sale_num = PrefixedStorage::new(PREFIX_SALE_NUM, &mut deps.storage);
+    save(&mut sale_num, token_key, &value);
+}
+
+/// Reverts a token's sale status back to not for sale and price to 0
+///
+/// # Arguments
+///
+/// * `deps` - mutable reference to Extern containing all the contract's external dependencies
+/// * `env` - Env of contract's environment
+/// * `config` - a mutable reference to the Config
+/// * `token_id` - optional token id, if not specified, use token index
+fn revert_sale_status<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    token_id: &str,
+) -> () {
+    let (ptoken, pidx) = get_sale_info(&deps.storage, token_id, None).unwrap();
+    let token_key = pidx.to_le_bytes();
+    let mut sale_store = PrefixedStorage::new(PREFIX_TOKEN_SALE_INFO, &mut deps.storage);
+    let mut token_store: TokenSaleInfo = json_load(&sale_store, &token_key).unwrap();
+    token_store.sale_status = SaleStatus::NotForSale;
+    token_store.token_price = Some(0);
+    json_save(&mut sale_store, &token_key, &token_store);
+
+    let mut for_sale: Vec<String> = load(&deps.storage, FOR_SALE_KEY).unwrap_or_default();
+    let find_v = token_id.to_string();
+    if for_sale.iter().find(|&s| *s == find_v).is_some() {
+        for_sale.retain(|id| *id != find_v);
+        save(&mut deps.storage, FOR_SALE_KEY, &for_sale);
+    }
 }
 
 /// Returns HandleResult
@@ -666,6 +822,7 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
         ));
     }
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+
     // check if token_id exists
     let map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
     let may_exist: Option<u32> = may_load(&map2idx, token_id.as_bytes())?;
@@ -674,6 +831,7 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
         "You are not authorized to perform this action on token {}",
         token_id
     );
+
     // if token supply is private, don't leak that the token id does not exist
     // instead just say they are not authorized for that token
     let opt_err = if config.token_supply_is_public {
@@ -683,6 +841,7 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
     };
 
     let (token, idx) = get_token(&deps.storage, token_id, opt_err)?;
+
     // if token exists make your checks
     if may_exist.is_some() {
         if !(token.owner == sender_raw) {
@@ -724,7 +883,7 @@ pub fn set_price<S: Storage, A: Api, Q: Querier>(
 /// * `token_id` - token id string slice
 /// * `custom_err` - optional custom error message to use if don't want to reveal that a
 /// token does not exist
-pub fn get_sale_info<S: ReadonlyStorage>(
+fn get_sale_info<S: ReadonlyStorage>(
     storage: &S,
     token_id: &str,
     custom_err: Option<&str>,
@@ -804,7 +963,7 @@ pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
             ));
         }
         // if the sale status is for sale then TokenSaleInfo struct is populated with all the given arguments.
-        // if the sale status is not for sale then TokenSaleInfo struct only gets populated with token_id and sale_status whereas regardless of price sent, price is set to None.
+
         if sale_status == SaleStatus::ForSale {
             // check if token is already for sale
             let find_v = token_id.to_string();
@@ -821,7 +980,9 @@ pub fn set_sale_status<S: Storage, A: Api, Q: Querier>(
             } else {
                 _token_price = price.unwrap_or_default();
             }
-        } else if sale_status == SaleStatus::NotForSale {
+        }
+        // if the sale status is not for sale then TokenSaleInfo struct only gets   populated with token_id and sale_status whereas regardless of price sent, price is set to None.
+        else if sale_status == SaleStatus::NotForSale {
             // if the token was previously for sale, remove it from list of tokens up for sale
             let mut for_sale: Vec<String> =
                 may_load(&deps.storage, FOR_SALE_KEY)?.unwrap_or_default();
@@ -905,7 +1066,9 @@ pub fn mint<S: Storage, A: Api, Q: Querier>(
         memo,
     }];
     let mut minted = mint_list(deps, &env, config, &sender_raw, mints)?;
+
     let minted_str = minted.pop().unwrap_or_default();
+
     Ok(HandleResponse {
         messages: vec![],
         log: vec![log("minted", &minted_str)],
@@ -4990,8 +5153,11 @@ fn mint_list<S: Storage, A: Api, Q: Querier>(
     let mut inventories: Vec<Inventory> = Vec::new();
     let mut minted: Vec<String> = Vec::new();
     let default_roy: Option<StoredRoyaltyInfo> = may_load(&deps.storage, DEFAULT_ROYALTY_KEY)?;
+
     for mint in mints.into_iter() {
         let id = mint.token_id.unwrap_or(format!("{}", config.mint_cnt));
+        let id_ = id.clone();
+
         // check if id already exists
         let mut map2idx = PrefixedStorage::new(PREFIX_MAP_TO_INDEX, &mut deps.storage);
         let may_exist: Option<u32> = may_load(&map2idx, id.as_bytes())?;
@@ -5001,12 +5167,23 @@ fn mint_list<S: Storage, A: Api, Q: Querier>(
                 id
             )));
         }
+
         // increment token count
         config.token_cnt = config.token_cnt.checked_add(1).ok_or_else(|| {
             StdError::generic_err("Attempting to mint more tokens than the implementation limit")
         })?;
+
         // map new token id to its index
         save(&mut map2idx, id.as_bytes(), &config.mint_cnt)?;
+
+        // set the sale number of the minted token id
+        let not_found = format!("Token ID: {} not found", id);
+        let map2idx_ = ReadonlyPrefixedStorage::new(PREFIX_MAP_TO_INDEX, &deps.storage);
+        let idx_: u32 =
+            may_load(&map2idx_, id.as_bytes())?.ok_or_else(|| StdError::generic_err(not_found))?;
+        let token_key = idx_.to_le_bytes();
+        set_sale_num(deps, &token_key, 0);
+
         let recipient = if let Some(o) = mint.owner {
             deps.api.canonical_address(&o)?
         } else {
@@ -5086,8 +5263,6 @@ fn mint_list<S: Storage, A: Api, Q: Querier>(
                 &token_key,
             )?;
         }
-        //
-        //
 
         // store the tx
         store_mint(
@@ -5110,6 +5285,7 @@ fn mint_list<S: Storage, A: Api, Q: Querier>(
         inventory.save(&mut deps.storage)?;
     }
     save(&mut deps.storage, CONFIG_KEY, &config)?;
+
     Ok(minted)
 }
 
