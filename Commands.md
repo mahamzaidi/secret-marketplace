@@ -22,6 +22,20 @@
 
 9) secretcli query compute list-contract-by-code CODE_ID
 
+10) CONTRACT=<contract address obtained in previous command>
+
+11) To mint without royalty use command:
+secretcli tx compute execute $CONTRACT '{"mint_nft": {"token_id":"1","transferable":true}}' --from <your-key> --keyring-backend test
+
+12) To mint by providing royalty:
+secretcli tx compute execute $CONTRACT '{"mint_nft": {"token_id":"2","royalty_info":{"decimal_places_in_rates":2,"royalties":[{"recipient":"<address to receive royalty>","rate":2}]},"transferable":true}}' --from <your-key> --keyring-backend test
+
+13) To set default royalty of contract:
+secretcli tx compute execute $CONTRACT '{"set_royalty_info": {"royalty_info":{"decimal_places_in_rates":2,"royalties":[{"recipient":"<address to receive royalty>","rate":2}]}}}' --from <your-key> --keyring-backend test
+
+14) Check address balance using: 
+secretcli query bank balances <address>
+
 
 
 

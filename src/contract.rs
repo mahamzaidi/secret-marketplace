@@ -659,7 +659,7 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
                     to_address: seller_,
                     amount: vec![Coin {
                         denom: "uscrt".to_string(),
-                        amount: royalty_amount,
+                        amount: after_royalty_ded,
                     }],
                 }));
 
@@ -668,12 +668,9 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
                     to_address: seller.clone(),
                     amount: vec![Coin {
                         denom: "uscrt".to_string(),
-                        amount: after_royalty_ded,
+                        amount: royalty_amount * Decimal::percent(98),
                     }],
                 }));
-
-                // coins = (coins - (coins * Decimal::percent(98))).unwrap();
-                // coins = (coins - royalty_amount).unwrap();
             }
         } else if may_roy_inf.is_some() {
             decimal_places = may_roy_inf.as_ref().unwrap().decimal_places_in_rates;
@@ -693,7 +690,7 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
                     to_address: seller_,
                     amount: vec![Coin {
                         denom: "uscrt".to_string(),
-                        amount: royalty_amount,
+                        amount: after_royalty_ded,
                     }],
                 }));
 
@@ -702,7 +699,7 @@ pub fn buy_token<S: Storage, A: Api, Q: Querier>(
                     to_address: seller.clone(),
                     amount: vec![Coin {
                         denom: "uscrt".to_string(),
-                        amount: after_royalty_ded,
+                        amount: royalty_amount * Decimal::percent(98),
                     }],
                 }));
             }
