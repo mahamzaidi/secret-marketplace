@@ -22,7 +22,9 @@
 
 9) secretcli query compute list-contract-by-code CODE_ID
 
-10) CONTRACT=<contract address obtained in previous command>
+10) CONTRACT= <contract address obtained in previous command>
+  
+## Other commands
 
 11) To mint without royalty use command:
 secretcli tx compute execute $CONTRACT '{"mint_nft": {"token_id":"1","transferable":true}}' --from <your-key> --keyring-backend test
